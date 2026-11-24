@@ -246,7 +246,7 @@
   });
   LIST.forEach((c) => {
     c.skill.text = c.skill.effects.map((e) => effectText(e, c.skill.target)).join('＋');
-    if (c.skill.target === 'self' && c.skill.effects.length) c.skill.text = '自分の' + c.skill.text;
+    if (c.skill.target === 'self') c.skill.text = c.skill.text.replace(/^HPを/, '自分のHPを');
     c.coopOK = !c.skill.attack;
     c.unlockText = c.unlock ? UNLOCK_JA[c.unlock.type](c.unlock) : '最初から使える';
   });
