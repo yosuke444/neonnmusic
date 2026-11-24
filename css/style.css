@@ -612,3 +612,219 @@ body {
     animation: none;
   }
 }
+
+/* ---------------- サウンドテスト（フェーズ2・開発用） ---------------- */
+.screen-settings .screen-foot .btn {
+  font-size: calc(var(--fs-btn) * 0.62);
+}
+.screen-soundTest .screen-body {
+  justify-content: stretch;
+  align-items: stretch;
+}
+.st {
+  flex: 1;
+  min-height: 0;
+  width: min(100%, 1000px);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(6px, 1.2vmin, 12px);
+  font-size: var(--fs-body);
+}
+.st-top {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+.btn-arrow {
+  --c: var(--neon-yellow);
+  width: 2.2em;
+  padding: 0.3em 0;
+  font-size: calc(var(--fs-btn) * 0.9);
+}
+.st-head {
+  text-align: center;
+  min-width: 0;
+}
+.st-title {
+  font-size: calc(var(--fs-btn) * 0.95);
+  color: #fff;
+  text-shadow: 0 0 8px var(--neon-yellow);
+}
+.st-meta,
+.st-status,
+.st-hint {
+  color: var(--text-dim);
+  font-size: calc(var(--fs-body) * 0.85);
+}
+.st-status {
+  min-height: 1.3em;
+  text-align: center;
+}
+.st-transport {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+}
+.st-transport .btn {
+  font-size: calc(var(--fs-btn) * 0.72);
+  padding: 0.35em 0.9em;
+}
+.st-pos {
+  min-width: 11em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--neon-yellow);
+  text-shadow: 0 0 6px var(--neon-yellow);
+}
+.st-sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+.btn-sec {
+  font-size: calc(var(--fs-body) * 0.85);
+  padding: 0.3em 0.6em;
+  min-height: 36px;
+  border-width: 2px;
+  box-shadow: none;
+}
+.btn-sec.is-on {
+  background: color-mix(in srgb, var(--c) 45%, rgba(10, 8, 28, 0.8));
+  box-shadow: 0 0 10px var(--c), 0 0 22px var(--c);
+}
+.st-tabs {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+.btn-tab {
+  --c: var(--neon-purple);
+  font-size: calc(var(--fs-body) * 0.9);
+  padding: 0.3em 1em;
+  min-height: 36px;
+  box-shadow: none;
+  opacity: 0.6;
+}
+.btn-tab.is-on {
+  opacity: 1;
+  box-shadow: 0 0 10px var(--c);
+}
+.st-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto; /* 開発用画面のため、チェック結果が多い時だけ枠の中で送る */
+  padding: clamp(8px, 1.6vmin, 16px);
+  border: 2px solid rgba(178, 107, 255, 0.45);
+  border-radius: var(--radius);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.st-parts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7.5em, 1fr));
+  gap: 8px;
+}
+.btn-part {
+  font-size: calc(var(--fs-body) * 0.95);
+  padding: 0.35em 0.4em;
+  min-height: 48px;
+}
+.btn-part.is-muted {
+  opacity: 0.28;
+  box-shadow: none;
+  text-shadow: none;
+  text-decoration: line-through;
+}
+.st-panel-foot {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.btn-small {
+  font-size: calc(var(--fs-body) * 0.9) !important;
+  padding: 0.3em 0.8em;
+  min-height: 36px;
+}
+.st-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: calc(var(--fs-body) * 0.88);
+  font-weight: 500;
+}
+.st-checks b {
+  color: #fff;
+}
+.lv-icon {
+  display: inline-block;
+  width: 1.4em;
+  font-weight: 900;
+}
+.lv-ok .lv-icon {
+  color: var(--neon-green);
+}
+.lv-warn .lv-icon {
+  color: var(--neon-yellow);
+}
+.lv-ng .lv-icon {
+  color: var(--neon-red);
+}
+.st-memo {
+  font-size: calc(var(--fs-body) * 0.85);
+  font-weight: 500;
+}
+.st-memo p {
+  margin: 0 0 4px;
+}
+.st-memo pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.st-status:empty {
+  display: none;
+}
+@media (max-width: 520px) {
+  .btn-part {
+    font-size: calc(var(--fs-body) * 0.8);
+    letter-spacing: -0.02em;
+  }
+}
+@media (max-height: 500px) {
+  .st {
+    gap: 4px;
+  }
+  .st-meta {
+    display: none;
+  }
+  .st-transport .btn-note,
+  .btn-part .btn-note {
+    display: none;
+  }
+  .btn-part {
+    min-height: 34px;
+    font-size: calc(var(--fs-body) * 0.82);
+  }
+  .st-parts {
+    grid-template-columns: repeat(auto-fill, minmax(6.8em, 1fr));
+    gap: 5px;
+  }
+  .btn-sec,
+  .btn-tab {
+    min-height: 30px;
+    padding: 0.15em 0.6em;
+  }
+}

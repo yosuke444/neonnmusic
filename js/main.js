@@ -429,6 +429,11 @@
     settings() {
       return SettingsScreen();
     },
+
+    /* ---------- サウンドテスト（設定の奥・10-5） ---------- */
+    soundTest() {
+      return SoundTestScreen();
+    },
   };
 
   /* =========================================================
@@ -505,8 +510,274 @@
     return {
       title: '設定',
       body: el('div', { class: 'settings-panel' }, [speedRow, el('div', { class: 'set-sep' }), ...volRows, note]),
+      foot: button('サウンドテスト（開発用）', () => Nav.go('soundTest'), { variant: 'sub', id: 'to-soundtest' }),
     };
   }
+
+  /* =========================================================
+   * サウンドテスト（10-5）：全曲の再生・パートごとの消音・自動チェック
+   * - 「再生」：その場で音を合成して鳴らす（パートごとに消せる）
+   * - 「書き出して再生」：本番と同じく OfflineAudioContext で書き出した音を鳴らす
+   *   （ドラムは「ドラム」、それ以外は「BGM」の音量で鳴る）
+   * ========================================================= */
+  const PART_JA = {
+    kick: 'キック',
+    snare: 'スネア',
+    clap: 'クラップ',
+    hat: 'ハイハット',
+    ohat: 'オープンハット',
+    shaker: 'シェイカー',
+    roll: 'スネア連打',
+    crash: 'クラッシュ',
+    bass: 'ベース',
+    lead: 'リード',
+    pluck: 'プラック',
+    pad: 'パッド',
+    arp: 'アルペジオ',
+    stab: '和音の刻み',
+    chords: '和音',
+    fx: '上昇音・衝撃音',
+  };
+
+  function SoundTestScreen() {
+    const songs = NLM.Songs.all();
+    const Music = NLM.Music;
+    let idx = 0;
+    let compiled = null;
+    let player = null; // { kind:'live'|'render', h }
+    let rendered = null;
+    let busy = false;
+    let tab = 'parts';
+    let lastSec = -1;
+    const muted = new Set();
+
+    const titleEl = el('div', { class: 'st-title' });
+    const metaEl = el('div', { class: 'st-meta' });
+    const posEl = el('div', { class: 'st-pos', text: '停止中' });
+    const statusEl = el('div', { class: 'st-status' });
+    const secRow = el('div', { class: 'st-sections' });
+    const panel = el('div', { class: 'st-panel' });
+
+    const playBtn = button('▶ 再生', () => playLive(0), { variant: 'primary', sub: 'パート別に消せる', id: 'st-play' });
+    const renderBtn = button('書き出して再生', () => playRender(0), { sub: '本番と同じ音', id: 'st-render', color: 'var(--neon-yellow)' });
+    const stopBtn = button('■ 停止', () => stop(), { variant: 'sub', id: 'st-stop' });
+
+    const tabs = {};
+    const tabRow = el(
+      'div',
+      { class: 'st-tabs' },
+      [
+        ['parts', 'パート'],
+        ['check', '自動チェック'],
+        ['memo', '設計メモ'],
+      ].map(([id, label]) => {
+        tabs[id] = button(label, () => {
+          tab = id;
+          drawPanel();
+        }, { className: 'btn-tab', id: 'tab-' + id });
+        return tabs[id];
+      })
+    );
+
+    const song = () => songs[idx];
+
+    function stop() {
+      if (player) player.h.stop();
+      player = null;
+      posEl.textContent = '停止中';
+      lastSec = -1;
+      if (compiled) drawSections();
+    }
+
+    async function playLive(startBeat) {
+      if (busy) return;
+      AE.init();
+      stop();
+      busy = true;
+      setBusy();
+      const forIdx = idx;
+      let h;
+      try {
+        h = await AE.startLive(song(), { startBeat, muted }, (p) => {
+          statusEl.textContent = `音色を準備中… ${Math.round(p * 100)}%`;
+        });
+      } catch (e) {
+        statusEl.textContent = '再生できませんでした：' + e.message;
+      }
+      busy = false;
+      setBusy();
+      if (!h) return;
+      if (forIdx !== idx || Nav.cur.id !== 'soundTest') {
+        h.stop(); // 準備中に曲や画面が変わった
+        return;
+      }
+      player = { kind: 'live', h };
+      statusEl.textContent = 'リアルタイム再生中（パートのボタンで音を消せます）';
+    }
+
+    async function playRender(startBeat) {
+      if (busy) return;
+      AE.init();
+      stop();
+      busy = true;
+      setBusy();
+      try {
+        rendered = await AE.renderSong(song(), (p, label) => {
+          statusEl.textContent = `${label}… ${Math.round(p * 100)}%`;
+        });
+      } catch (e) {
+        statusEl.textContent = '書き出しに失敗しました：' + e.message;
+        busy = false;
+        setBusy();
+        return;
+      }
+      busy = false;
+      setBusy();
+      statusEl.textContent = `書き出し版を再生中（書き出し ${(rendered.renderMs / 1000).toFixed(1)}秒）。パート別の消音はリアルタイム再生で`;
+      const offset = startBeat * compiled.spb;
+      player = { kind: 'render', h: AE.playRendered(rendered, AE.now() + 0.15, offset) };
+      if (tab === 'check') drawPanel();
+    }
+
+    function seek(startBeat) {
+      if (player && player.kind === 'render') {
+        player.h.stop();
+        player = { kind: 'render', h: AE.playRendered(rendered, AE.now() + 0.1, startBeat * compiled.spb) };
+      } else playLive(startBeat);
+    }
+
+    function setBusy() {
+      [playBtn, renderBtn, stopBtn].forEach((b) => (b.disabled = busy));
+    }
+
+    function currentBeat() {
+      if (!player) return null;
+      return player.kind === 'live' ? player.h.beat() : player.h.position() / compiled.spb;
+    }
+
+    function selectSong(i) {
+      stop();
+      idx = (i + songs.length) % songs.length;
+      compiled = Music.compile(song());
+      rendered = null;
+      muted.clear();
+      const d = Music.describe(compiled);
+      titleEl.textContent = `${idx + 1}/${songs.length}　${d.title}`;
+      metaEl.textContent = `${d.genre}　BPM ${d.bpm}　${d.key}　${d.duration}`;
+      statusEl.textContent = '';
+      drawSections();
+      drawPanel();
+    }
+
+    function drawSections() {
+      const cur = currentBeat();
+      secRow.replaceChildren(
+        ...compiled.sections.map((s) => {
+          const on = cur !== null && cur >= s.startBeat && cur < s.startBeat + s.beats;
+          return button(s.name, () => seek(s.startBeat), {
+            className: 'btn-sec' + (on ? ' is-on' : ''),
+            color: SEC_COLOR[s.type],
+          });
+        })
+      );
+    }
+
+    function drawPanel() {
+      Object.entries(tabs).forEach(([id, b]) => b.classList.toggle('is-on', id === tab));
+      if (tab === 'parts') {
+        const parts = Object.values(compiled.parts).sort((a, b) => (a.stem === b.stem ? 0 : a.stem === 'drum' ? -1 : 1));
+        const grid = el(
+          'div',
+          { class: 'st-parts' },
+          parts.map((p) => {
+            const b = button(PART_JA[p.name] || p.name, () => {
+              if (muted.has(p.name)) muted.delete(p.name);
+              else muted.add(p.name);
+              b.classList.toggle('is-muted', muted.has(p.name));
+              if (player && player.kind === 'live') player.h.setMute(p.name, muted.has(p.name));
+            }, { className: 'btn-part' + (muted.has(p.name) ? ' is-muted' : ''), sub: p.stem === 'drum' ? 'ドラム' : 'ドラム以外', color: p.stem === 'drum' ? 'var(--neon-pink)' : 'var(--neon-cyan)' });
+            return b;
+          })
+        );
+        const allOn = button('全部オン', () => {
+          muted.clear();
+          if (player && player.kind === 'live') parts.forEach((p) => player.h.setMute(p.name, false));
+          drawPanel();
+        }, { variant: 'sub', className: 'btn-small' });
+        panel.replaceChildren(grid, el('div', { class: 'st-panel-foot' }, [allOn, el('span', { class: 'st-hint', text: '押すと消音（暗くなる）。もう一度押すと戻る' })]));
+      } else if (tab === 'check') {
+        const res = Music.check(compiled, rendered);
+        const icon = { ok: '○', warn: '△', ng: '×' };
+        panel.replaceChildren(
+          el(
+            'ul',
+            { class: 'st-checks' },
+            res.map((r) => el('li', { class: 'lv-' + r.level }, [el('span', { class: 'lv-icon', text: icon[r.level] }), el('b', { text: r.item }), ' ', r.msg]))
+          )
+        );
+      } else {
+        const d = Music.describe(compiled);
+        panel.replaceChildren(
+          el('div', { class: 'st-memo' }, [
+            el('p', { text: `コード進行（ドロップ）：${d.prog}` }),
+            el('p', { text: `構成：${d.structure}` }),
+            el('pre', { text: song().memo || '（メモなし）' }),
+          ])
+        );
+      }
+    }
+
+    selectSong(0);
+
+    return {
+      title: 'サウンドテスト',
+      crumb: '設定',
+      color: 'var(--neon-yellow)',
+      body: el('div', { class: 'st' }, [
+        el('div', { class: 'st-top' }, [
+          button('◀', () => selectSong(idx - 1), { className: 'btn-arrow', id: 'st-prev' }),
+          el('div', { class: 'st-head' }, [titleEl, metaEl]),
+          button('▶', () => selectSong(idx + 1), { className: 'btn-arrow', id: 'st-next' }),
+        ]),
+        el('div', { class: 'st-transport' }, [playBtn, renderBtn, stopBtn, posEl]),
+        statusEl,
+        secRow,
+        tabRow,
+        panel,
+      ]),
+      onEnter() {
+        GameLoop.start(() => {
+          if (!player) return;
+          const b = currentBeat();
+          const sec = b * compiled.spb;
+          if (sec > compiled.duration + 2.5) {
+            stop();
+            return;
+          }
+          const bar = Math.max(1, Math.floor(b / compiled.beatsPerBar) + 1);
+          const s = compiled.sections.find((x) => b >= x.startBeat && b < x.startBeat + x.beats);
+          posEl.textContent = `${Music.fmtTime(Math.max(0, sec))} / ${Music.fmtTime(compiled.duration)}　${bar}小節目`;
+          const si = s ? compiled.sections.indexOf(s) : -1;
+          if (si !== lastSec) {
+            lastSec = si;
+            drawSections();
+          }
+        });
+      },
+      onLeave() {
+        GameLoop.stop();
+        stop();
+      },
+    };
+  }
+
+  const SEC_COLOR = {
+    intro: 'var(--neon-purple)',
+    build: 'var(--neon-yellow)',
+    drop: 'var(--neon-pink)',
+    break: 'var(--neon-cyan)',
+    outro: 'var(--neon-purple)',
+  };
 
   /* =========================================================
    * 演奏画面（フェーズ1の仮）：音声の時計で動くゲームループの確認
