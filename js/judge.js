@@ -61,6 +61,7 @@
       shield: 0, // ダメージ無効の残り回数
       autoLeft: 0, // AUTO演奏の残りノーツ数
       scoreBoostUntil: 0,
+      damageHalfUntil: 0, // フィーバー中：ミスのダメージ半分
       // 演争・協奏で使う：HPの比較相手
       refHp: null, // () => 生存者の最高HP
       sharedHp: null, // 協奏：共通HP { hp }
@@ -97,6 +98,7 @@
       st.combo = 0;
       st.counts.miss++;
       let dmg = damageOf(note) * (st.mods.damage || 1);
+      if (now !== undefined && now < st.damageHalfUntil) dmg *= 0.5;
       if (st.shield > 0) {
         st.shield--;
         dmg = 0;
@@ -135,7 +137,7 @@
   };
 
   /** 長押しを途中で離した：最初の判定を取り消してミスにする（6-2） */
-  J.revise = function (st, note, prev) {
+  J.revise = function (st, note, prev, now) {
     const mult = note.key ? J.KEY_NOTE_MULTIPLIER : 1;
     let base = J.SCORE[prev] * mult;
     if (prev === 'great' && st.mods.greatScore) base *= st.mods.greatScore;
@@ -144,7 +146,7 @@
     st.score = Math.max(0, st.score - Math.round(base));
     st.counts[prev] = Math.max(0, st.counts[prev] - 1);
     st.judged--;
-    return J.apply(st, note, 'miss');
+    return J.apply(st, note, 'miss', now);
   };
 
   /** 割合（0〜1）で成績の指標 */
@@ -237,7 +239,7 @@
         if (t < n.end - J.HOLD_RELEASE_GRACE) {
           // 途中で離した → ミス扱い
           n.broken = true;
-          const r = J.revise(st, n, n.result);
+          const r = J.revise(st, n, n.result, t);
           n.result = 'miss';
           ev.push({ type: 'holdBreak', note: n, lane, shielded: r.shielded });
         } else ev.push({ type: 'holdEnd', note: n, lane });

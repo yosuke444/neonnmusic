@@ -24,6 +24,12 @@
     role: null, // host / guest
     difficulty: null,
     songId: null,
+    charId: 'neonyan',
+    cpuCount: 7,
+    strength: 'normal',
+    songCount: 3,
+    songCountFree: false,
+    match: null,
   };
 
   /* =========================================================
@@ -81,6 +87,10 @@
     /** 履歴を指定して移動（もう一度遊ぶ・別の画面へ戻る など） */
     goWithStack(stack, id, params) {
       this.stack = stack.map((x) => ({ id: x.id, params: x.params || {} }));
+      this._show(id, params || {});
+    },
+    /** 今の画面を置き換える（履歴は増やさない） */
+    replace(id, params) {
       this._show(id, params || {});
     },
     /** 履歴を消して移動（メニューを土台にする） */
@@ -254,7 +264,7 @@
           }, { variant: 'primary', sub: '部屋を作る・部屋に入る', color: 'var(--neon-cyan)' }),
           button('CPU', () => {
             Session.opponent = 'cpu';
-            Nav.go(Session.mode === 'battle' ? 'cpuRules' : 'lobby');
+            Nav.go('cpuRules');
           }, { variant: 'primary', sub: 'CPUと遊ぶ', color: 'var(--neon-purple)' }),
         ]),
       };
@@ -327,29 +337,17 @@
 
     /* ---------- ルール設定（演争・CPU） ---------- */
     cpuRules() {
-      return {
-        title: 'ルール設定',
-        crumb: modeCrumb(),
-        body: placeholder(['CPUの人数（1〜31人）・CPUの強さ', '（仮表示）フェーズ4で実装']),
-        foot: nextButton('決定 → キャラ選択へ', () => Nav.go('charSelect')),
-      };
+      return RulesScreen();
     },
 
     /* ---------- キャラ選択（演争CPU・独奏） ---------- */
     charSelect() {
-      const m = MODES[Session.mode];
-      return {
-        title: 'キャラ選択',
-        crumb: modeCrumb(),
-        color: m && m.color,
-        body: placeholder(['解禁済みのキャラから選ぶ', '（仮表示）フェーズ4で実装']),
-        foot: nextButton('決定 → 曲選択へ', () => Nav.go(Session.mode === 'battle' ? 'songDiffSelect' : 'songSelect')),
-      };
+      return CharScreen(false);
     },
 
-    /* ---------- 曲・難易度選択（演争CPU）：独奏と同じ選び方（フェーズ4で調整） ---------- */
+    /* ---------- 曲・難易度選択（CPU戦：本人が直接選ぶ） ---------- */
     songDiffSelect() {
-      return SongSelectScreen();
+      return MatchSongScreen();
     },
 
     /* ---------- 曲選択（独奏） ---------- */
@@ -374,14 +372,7 @@
 
     /* ---------- キャラ一覧 ---------- */
     charList() {
-      return {
-        title: 'キャラ一覧',
-        body: placeholder([
-          `全${NLM.Characters.TOTAL}体（最初は${NLM.Characters.INITIAL_UNLOCKED}体が解禁済み）`,
-          '解禁状況・特性・スキル・解禁条件と進み具合',
-          '（仮表示）フェーズ4・7で実装',
-        ]),
-      };
+      return CharScreen(true);
     },
 
     /* ---------- 曲一覧 ---------- */
@@ -841,7 +832,7 @@
       const b = bestOf(song.id, d.id);
       const btn = button(d.name, () => {
         Session.difficulty = d.id;
-        Nav.go('play', { songId: song.id, difficulty: d.id });
+        startMatch([song.id], d.id);
       }, { className: 'btn-diff btn-diff2', color: DIFF_COLORS[i], sub: `ノーツ ${ch.stats.count}${b ? '　ベスト ' + b.score.toLocaleString() : ''}`, id: 'diff-' + d.id });
       btn.prepend(el('span', { class: 'diff-lv', text: ch.level }));
       return btn;
@@ -855,13 +846,267 @@
   }
 
   /* =========================================================
-   * 演奏画面（5・6章、7-3）
-   * - 判定はすべて judge.js、時刻は音声時刻（AE.now / event.timeStamp）
-   * - HPはレーンの裏にバーと%（5-3）
-   * - フェーズ3：スキルは仮で「HP回復」のみ。演出は最小限（フェーズ5で仕上げ）
+   * ルール設定（CPU戦）：CPUの人数・強さ・曲数（7-1）
+   * ========================================================= */
+  function RulesScreen() {
+    const battle = Session.mode === 'battle';
+    const avail = playableSongs().length;
+    const stepper = (label, get, set, lo, hi, id) => {
+      const val = el('span', { class: 'set-value set-value-big' });
+      const show = () => (val.textContent = get());
+      show();
+      const step = (d) => {
+        set(Math.max(lo, Math.min(hi, get() + d)));
+        show();
+        refresh();
+      };
+      return el('div', { class: 'set-row' }, [
+        el('label', { class: 'set-label', text: label }),
+        el('div', { class: 'set-control stepper' }, [
+          button('−5', () => step(-5), { className: 'btn-step btn-step5' }),
+          button('−', () => step(-1), { className: 'btn-step', id: id + '-down' }),
+          val,
+          button('＋', () => step(1), { className: 'btn-step', id: id + '-up' }),
+          button('＋5', () => step(5), { className: 'btn-step btn-step5' }),
+        ]),
+      ]);
+    };
+    const toggles = (label, items, get, set) => {
+      const bs = items.map(([v, t]) =>
+        button(t, () => {
+          set(v);
+          refresh();
+        }, { className: 'btn-toggle', dataset: { v } })
+      );
+      bs.forEach((b, i) => (b.dataset.v = items[i][0]));
+      const row = el('div', { class: 'set-row' }, [el('label', { class: 'set-label', text: label }), el('div', { class: 'set-control toggles' }, bs)]);
+      row._sync = () => bs.forEach((b) => b.classList.toggle('is-on', String(get()) === b.dataset.v));
+      return row;
+    };
+    const total = el('div', { class: 'rules-total' });
+    const strengthRow = toggles(
+      'CPUの強さ',
+      Object.entries(NLM.Battle.STRENGTH).map(([k, v]) => [k, v.name]),
+      () => Session.strength,
+      (v) => (Session.strength = v)
+    );
+    const rows = [stepper('CPUの人数', () => Session.cpuCount, (v) => (Session.cpuCount = v), 1, 31, 'cpu'), strengthRow];
+    let countRow = null;
+    let freeRow = null;
+    if (battle) {
+      countRow = toggles(
+        '曲数',
+        [
+          ['3', '3曲'],
+          ['5', '5曲'],
+          ['free', '自由'],
+        ],
+        () => (Session.songCountFree ? 'free' : Session.songCount),
+        (v) => {
+          if (v === 'free') Session.songCountFree = true;
+          else {
+            Session.songCountFree = false;
+            Session.songCount = Number(v);
+          }
+        }
+      );
+      freeRow = stepper('自由な曲数', () => Session.songCount, (v) => (Session.songCount = v), 1, 10, 'songs');
+      rows.push(countRow, freeRow);
+    }
+    function refresh() {
+      strengthRow._sync();
+      if (countRow) {
+        countRow._sync();
+        freeRow.hidden = !Session.songCountFree;
+      }
+      const n = Session.cpuCount + 1;
+      const songs = battle ? Math.min(Session.songCount, avail) : 1;
+      total.textContent = `参加 ${n}人（あなた＋CPU ${Session.cpuCount}人）${battle ? `　曲数 ${songs}曲` : ''}${battle && Session.songCount > avail ? `（遊べる曲が${avail}曲のため）` : ''}`;
+    }
+    refresh();
+    return {
+      title: battle ? 'ルール設定' : 'ロビー',
+      crumb: modeCrumb(),
+      body: el('div', { class: 'settings-panel rules-panel' }, rows.concat([total])),
+      foot: nextButton('決定 → キャラ選択へ', () => Nav.go('charSelect')),
+    };
+  }
+
+  /* =========================================================
+   * キャラ選択・キャラ一覧（8章）
+   * listMode=true：メニューの「キャラ一覧」（選ぶボタンなし）
+   * ========================================================= */
+  function CharScreen(listMode) {
+    const Chars = NLM.Characters;
+    const unlocked = new Set(Save.data.unlocked.characters);
+    let sel = Chars.get(Session.charId) && (listMode || unlocked.has(Session.charId)) ? Chars.get(Session.charId) : Chars.get(Save.data.unlocked.characters[0]) || Chars.list[0];
+    const big = el('canvas', { class: 'char-big' });
+    const small = ['skill', 'win', 'lose'].map(() => el('canvas', { class: 'char-small' }));
+    const info = el('div', { class: 'char-info' });
+    const okBtn = button('このキャラで決定', () => {
+      Session.charId = sel.id;
+      Nav.go(Session.mode === 'solo' ? 'songSelect' : 'songDiffSelect');
+    }, { variant: 'primary', className: 'btn-next', id: 'char-ok' });
+    const cells = Chars.list.map((c) => {
+      const locked = !unlocked.has(c.id);
+      const b = button('', () => pick(c), { className: 'btn-char' + (locked ? ' is-locked' : ''), color: c.color, id: 'char-' + c.id });
+      b.replaceChildren(el('img', { src: Chars.iconURL(c, 56), alt: '' }), el('span', { class: 'char-name', text: locked && !listMode ? '？？？' : c.name }));
+      b.addEventListener('focus', () => pick(c));
+      return b;
+    });
+    function paintSmall() {
+      ['skill', 'win', 'lose'].forEach((ex, i) => {
+        const cv = small[i];
+        const r = cv.getBoundingClientRect();
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        cv.width = Math.max(1, r.width * dpr);
+        cv.height = Math.max(1, r.height * dpr);
+        const g = cv.getContext('2d');
+        g.clearRect(0, 0, cv.width, cv.height);
+        const sz = Math.min(cv.width, cv.height);
+        Chars.draw(g, sel, cv.width / 2, cv.height / 2, sz * 0.9, ex);
+      });
+    }
+    function pick(c) {
+      sel = c;
+      cells.forEach((b, i) => b.classList.toggle('is-sel', Chars.list[i] === c));
+      const locked = !unlocked.has(c.id);
+      const sk = c.skill;
+      const coopNote = c.coopOK ? '' : '（協奏ではスキルなし）';
+      info.replaceChildren(
+        el('div', { class: 'char-title' }, [el('span', { class: 'char-no', text: 'No.' + c.no }), el('span', { text: c.name }), locked ? el('span', { class: 'char-lock', text: '未解禁' }) : null]),
+        el('div', { class: 'char-motif', text: c.motif }),
+        el('div', { class: 'char-line' }, [el('b', { text: '特性　' }), c.trait.text]),
+        el('div', { class: 'char-line' }, [el('b', { text: 'スキル　' }), `${sk.name}：${sk.text}`]),
+        el('div', { class: 'char-line dim' }, [`メーター満タン ${sk.meter}　対象：${NLM.Characters.TARGET_JA[sk.target]}`, el('span', { class: 'char-coop', text: coopNote })]),
+        el('div', { class: 'char-line dim' }, [el('b', { text: '解禁　' }), c.unlockText])
+      );
+      okBtn.disabled = locked;
+      if (Nav.cur && Nav.cur.def === def) paintSmall();
+    }
+    const def = {
+      title: listMode ? 'キャラ一覧' : 'キャラ選択',
+      crumb: listMode ? null : modeCrumb(),
+      body: el('div', { class: 'char-layout' }, [
+        el('div', { class: 'char-grid' }, cells),
+        el('div', { class: 'char-detail' }, [el('div', { class: 'char-stage' }, [big, el('div', { class: 'char-smalls' }, small)]), info]),
+      ]),
+      foot: listMode ? null : okBtn,
+      onEnter(screen) {
+        pick(sel);
+        const target = cells[Chars.list.indexOf(sel)];
+        if (target) target.focus({ preventScroll: true });
+        paintSmall();
+        GameLoop.start(() => {
+          const r = big.getBoundingClientRect();
+          const dpr = Math.min(2, window.devicePixelRatio || 1);
+          if (big.width !== Math.round(r.width * dpr)) {
+            big.width = Math.round(r.width * dpr);
+            big.height = Math.round(r.height * dpr);
+          }
+          const g = big.getContext('2d');
+          g.clearRect(0, 0, big.width, big.height);
+          const sz = Math.min(big.width, big.height);
+          // 待機の表情（線が少しずつ揺れる）
+          Chars.draw(g, sel, big.width / 2, big.height / 2 + Math.sin(performance.now() / 400) * sz * 0.02, sz * 0.86, 'idle', { boil: true });
+        });
+      },
+      onLeave() {
+        GameLoop.stop();
+      },
+    };
+    return def;
+  }
+
+  /* =========================================================
+   * 曲・難易度選択（CPU戦）：演争は曲数ぶん順番に選ぶ／協奏は1曲（7-1）
+   * ========================================================= */
+  function MatchSongScreen() {
+    const songs = playableSongs();
+    const need = Session.mode === 'battle' ? Math.max(1, Math.min(Session.songCount, songs.length)) : 1;
+    const picked = [];
+    const info = el('div', { class: 'diff-song' });
+    const cards = songs.map((s, i) => {
+      const badge = el('span', { class: 'pick-badge' });
+      const b = button(s.title, () => {
+        const k = picked.indexOf(s.id);
+        if (k >= 0) picked.splice(k, 1);
+        else if (need === 1) picked.splice(0, picked.length, s.id);
+        else if (picked.length < need) picked.push(s.id);
+        refresh();
+      }, { className: 'btn-song', sub: `${s.genre}　BPM ${s.bpm}${s.proto ? '　［試作・開発中のみ］' : ''}`, color: LANE_COLORS[i % 4] });
+      b.append(badge);
+      b._badge = badge;
+      b._id = s.id;
+      return b;
+    });
+    const diffs = NLM.Songs.DIFFICULTIES.map((d, i) =>
+      button(d.name, () => {
+        Session.difficulty = d.id;
+        startMatch(picked.slice(), d.id);
+      }, { className: 'btn-diff', color: DIFF_COLORS[i], id: 'mdiff-' + d.id })
+    );
+    function refresh() {
+      cards.forEach((b) => {
+        const k = picked.indexOf(b._id);
+        b.classList.toggle('is-on', k >= 0);
+        b._badge.textContent = k >= 0 ? (need > 1 ? String(k + 1) : '✓') : '';
+      });
+      const ready = picked.length === need;
+      diffs.forEach((b) => (b.disabled = !ready));
+      info.textContent = need > 1 ? `演奏する順に${need}曲選んでください（${picked.length}/${need}）。全曲同じ難易度です` : '曲を1つ選んでください';
+    }
+    refresh();
+    return {
+      title: '曲・難易度選択',
+      crumb: modeCrumb(),
+      body: el('div', { class: 'song-select' }, [info, el('div', { class: 'song-grid' }, cards), el('div', { class: 'grid grid-4' }, diffs)]),
+    };
+  }
+
+  /** 試合を始める（独奏も1人の試合として扱う） */
+  function startMatch(songIds, difficulty, opts) {
+    opts = opts || {};
+    const mode = Session.mode || 'solo';
+    const players = [{ name: 'あなた', charId: Session.charId || 'neonyan', local: true }];
+    if (mode !== 'solo') {
+      const used = {};
+      for (let i = 0; i < Session.cpuCount; i++) {
+        const c = NLM.Characters.list[Math.floor(Math.random() * NLM.Characters.list.length)];
+        used[c.id] = (used[c.id] || 0) + 1;
+        players.push({ name: c.name + (used[c.id] > 1 ? used[c.id] : ''), charId: c.id, cpu: true, strength: Session.strength });
+      }
+    }
+    Session.match = {
+      mode,
+      difficulty,
+      songs: songIds,
+      index: 0,
+      played: [],
+      auto: !!opts.auto,
+      preview: !!opts.preview,
+      battle: NLM.Battle.create({ mode, players, seed: Math.floor(Math.random() * 1e9) }),
+      recorded: false,
+    };
+    if (opts.preview) {
+      Nav.go('play', {});
+      return;
+    }
+    const stack =
+      mode === 'solo'
+        ? [{ id: 'menu' }, { id: 'charSelect' }, { id: 'songSelect' }, { id: 'diffSelect' }]
+        : [{ id: 'menu' }, { id: 'opponent' }, { id: 'cpuRules' }, { id: 'charSelect' }, { id: 'songDiffSelect' }];
+    Nav.goWithStack(stack, 'play', {});
+  }
+
+  /* =========================================================
+   * 演奏画面（5・6・7章、13-2）
+   * - 判定は judge.js、スキル・CPU・脱落は battle.js
+   * - HPはレーンの裏にバーと%（協奏は共通HP）
+   * - 妨害：レーンを隠す・上を隠す・見えにくく・揺らす・1.5倍速。0.5秒前に予告
    * ========================================================= */
   const JUDGE_TEXT = { perfect: 'PERFECT', great: 'GREAT', miss: 'MISS', auto: 'AUTO' };
-  const PROVISIONAL_HEAL = 15;
+  const EFFECT_JA = { blind: 'レーン隠し', curtain: '上が見えない', fog: 'ノーツが見えにくい', wobble: 'ノーツが揺れる', rush: '1.5倍速' };
 
   function hexA(hex, a) {
     const n = parseInt(hex.slice(1), 16);
@@ -870,21 +1115,44 @@
 
   function PlayScreen(params) {
     params = params || {};
-    const song = NLM.Songs.get(params.songId || Session.songId) || playableSongs()[0];
-    const diff = params.difficulty || Session.difficulty || 'normal';
-    const auto = !!params.auto;
+    if (params.auto) {
+      // 譜面確認（サウンドテストから）：1人・自動演奏
+      Session.mode = 'solo';
+      Session.match = null;
+      startMatchPreview(params);
+    }
+    let match = Session.match;
+    if (!match) {
+      const s0 = NLM.Songs.get(params.songId || Session.songId) || playableSongs()[0];
+      Session.mode = Session.mode || 'solo';
+      startMatchSilently([s0.id], params.difficulty || Session.difficulty || 'normal');
+      match = Session.match;
+    }
+    const mode = match.mode;
+    const B = match.battle;
+    const me = B.players.find((p) => p.local);
+    const song = NLM.Songs.get(match.songs[match.index]);
+    const diff = match.difficulty;
+    const auto = match.auto;
     const chart = NLM.Chart.generate(song, diff);
     const Judge = NLM.Judge;
-    const st = Judge.createState({ mode: 'solo' });
+    const st = me.st;
     const ses = Judge.createSession(chart, st, { auto });
     const speed = Save.data.settings.noteSpeed;
     const diffName = NLM.Songs.DIFFICULTIES.find((d) => d.id === diff).name;
+    const multi = B.players.length > 1;
+    const Chars = NLM.Characters;
 
     let when = null;
     let audio = null;
     let ended = false;
     let ro = null;
     let lastT = -3;
+    let overAt = null;
+    let plistAt = 0;
+    let lastFlash = -9;
+    const keyIdx = chart.notes.map((n, i) => (n.key ? i : -1)).filter((i) => i >= 0);
+    let keyPtr = 0;
     const down = [false, false, false, false];
     const flashAt = [-9, -9, -9, -9];
     const flashRes = ['', '', '', ''];
@@ -895,14 +1163,78 @@
     const comboEl = el('div', { class: 'hud-combo' });
     const scoreEl = el('div', { class: 'hud-score', text: '0' });
     const meterFill = el('div', { class: 'meter-fill' });
-    const meterEl = el('div', { class: 'hud-meter' }, [el('div', { class: 'meter-label', text: 'SKILL' }), el('div', { class: 'meter-bar' }, [meterFill])]);
+    const meterEl = el('div', { class: 'hud-meter' }, [el('div', { class: 'meter-label', text: `SKILL　${me.char.skill.name}` }), el('div', { class: 'meter-bar' }, [meterFill])]);
+    if (me.noSkill) meterEl.hidden = true; // 協奏：攻撃系のキャラはメーターを出さない（7-2）
     const skillEl = el('div', { class: 'hud-skill' });
+    const logEl = el('div', { class: 'hud-log' });
+    const warnEl = el('div', { class: 'play-warn' });
+    const deadEl = el('div', { class: 'play-dead', text: '脱落… 観戦中' });
+    deadEl.hidden = true;
+    const flashEl = el('div', { class: 'coop-flash' });
     const overlayText = el('div', { class: 'ov-text', text: '読み込み中…' });
     const overlayBar = el('div', { class: 'ov-bar-fill' });
-    const overlay = el('div', { class: 'play-overlay' }, [overlayText, el('div', { class: 'ov-bar' }, [overlayBar])]);
-    const laneWrap = el('div', { class: 'lane-wrap' }, [canvas, overlay]);
+    const overlay = el('div', { class: 'play-overlay' }, [
+      multi && B.songIndex === 0 && match.index > 0 ? null : null,
+      el('div', { class: 'ov-song', text: `${match.songs.length > 1 ? `${match.index + 1}曲目／${match.songs.length}曲　` : ''}${song.title}` }),
+      overlayText,
+      el('div', { class: 'ov-bar' }, [overlayBar]),
+    ]);
+    const laneWrap = el('div', { class: 'lane-wrap' }, [canvas, warnEl, deadEl, overlay]);
     const zones = [0, 1, 2, 3].map((i) => el('div', { class: 'touch-zone', style: { '--c': `var(--lane-${i})` } }));
     const quitBtn = button('中断', () => Nav.back(), { variant: 'sub', className: 'btn-quit' });
+
+    /* ---------- 参加者一覧（13-2：HPの順・32人でも1画面） ---------- */
+    const plist = el('div', { class: 'plist' });
+    const rows = new Map();
+    if (multi) {
+      const cols = B.players.length > 12 ? 2 : 1;
+      plist.style.setProperty('--n', B.players.length);
+      plist.style.setProperty('--cols', cols);
+      plist.style.setProperty('--rows', Math.max(4, Math.ceil(B.players.length / cols)));
+      plist.classList.toggle('is-many', B.players.length > 12);
+      for (const p of B.players) {
+        const fill = el('div', { class: 'pl-fill' });
+        const pct = el('span', { class: 'pl-pct' });
+        const row = el('div', { class: 'pl-row' + (p.local ? ' is-me' : '') }, [
+          el('img', { class: 'pl-icon', src: Chars.iconURL(p.char, 40), alt: '' }),
+          el('span', { class: 'pl-name', text: p.name }),
+          el('div', { class: 'pl-bar' }, [fill]),
+          pct,
+        ]);
+        row.style.setProperty('--c', p.char.color);
+        rows.set(p, { row, fill, pct });
+        plist.append(row);
+      }
+    }
+    function updatePlist() {
+      if (!multi) return;
+      const order = mode === 'coop' ? B.players : B.standings().map((x) => x.p);
+      order.forEach((p, i) => {
+        const r = rows.get(p);
+        r.row.style.order = i;
+        if (mode === 'coop') {
+          r.fill.style.width = (B.shared.hp || 0) + '%';
+          r.pct.textContent = p.lastRes ? JUDGE_TEXT[p.lastRes] : '';
+          r.pct.className = 'pl-pct j-' + (p.lastRes || '');
+        } else {
+          r.fill.style.width = Math.max(0, p.st.hp) + '%';
+          r.pct.textContent = Math.ceil(p.st.hp) + '%';
+          r.row.classList.toggle('is-out', !p.alive);
+        }
+      });
+    }
+    function flashRow(p) {
+      const r = rows.get(p);
+      if (!r) return;
+      r.row.classList.remove('is-skill');
+      void r.row.offsetWidth;
+      r.row.classList.add('is-skill');
+    }
+    function log(text) {
+      const line = el('div', { class: 'log-line', text });
+      logEl.prepend(line);
+      while (logEl.childNodes.length > 3) logEl.lastChild.remove();
+    }
 
     const songTime = (ts) => AE.perfToAudio(ts) - when;
 
@@ -919,38 +1251,62 @@
       meterFill.style.setProperty('--m', Math.min(1, r));
       meterEl.classList.toggle('near', r >= 0.85); // 予告：満タン直前に脈打つ
     }
-    function doSkill() {
-      // フェーズ3の仮スキル：HP回復
-      st.hp = Math.min(Judge.HP_MAX, st.hp + PROVISIONAL_HEAL);
-      skillEl.textContent = `スキル発動！ HP回復 +${PROVISIONAL_HEAL}`;
+    function showSkill(text) {
+      skillEl.textContent = text;
       skillEl.classList.remove('show');
       void skillEl.offsetWidth;
       skillEl.classList.add('show');
+    }
+    function battleEvents(out) {
+      for (const e of out) {
+        if (e.type === 'skill') {
+          flashRow(e.p);
+          if (e.p === me) showSkill(`スキル発動！ ${e.skill.name}`);
+          else if (multi) {
+            const tg = e.targets.includes(me) && e.skill.target !== 'self' ? ' → あなた' : '';
+            log(`${e.p.name}「${e.skill.name}」${tg}`);
+          }
+        } else if (e.type === 'elim') {
+          log(`${e.p.name} 脱落`);
+          if (e.p === me) {
+            deadEl.hidden = false;
+            laneWrap.classList.add('is-dead');
+          }
+        } else if (e.type === 'over') {
+          overAt = lastT;
+        } else if (e.type === 'judge') {
+          e.p.lastRes = e.result;
+        }
+      }
     }
     function handleEvents(evs) {
       if (!evs.length) return;
       for (const e of evs) {
         if (e.type === 'judge') {
           showJudge(e.result);
+          me.lastRes = e.result;
           if (e.note.type !== 'roll') {
             flashAt[e.lane] = lastT;
             flashRes[e.lane] = e.result;
           }
         } else if (e.type === 'holdBreak') showJudge('miss');
-        else if (e.type === 'skill') doSkill();
       }
+      battleEvents(B.onLocal(me, evs, lastT));
       updateHud();
     }
+    const canPlay = () => !auto && when !== null && !ended && me.alive;
     function press(lane, ts) {
       if (down[lane]) return;
       down[lane] = true;
-      if (auto || when === null || ended) return;
-      handleEvents(ses.press(lane, songTime(ts)));
+      if (!canPlay()) return;
+      const t = songTime(ts);
+      lastT = Math.max(lastT, t);
+      handleEvents(ses.press(lane, t));
     }
     function release(lane, ts) {
       if (!down[lane]) return;
       down[lane] = false;
-      if (auto || when === null || ended) return;
+      if (!canPlay()) return;
       handleEvents(ses.release(lane, songTime(ts)));
     }
     zones.forEach((z, i) => {
@@ -989,17 +1345,21 @@
       const H = canvas.height;
       const lw = W / 4;
       const jy = H * 0.86;
-      const pxs = H * 0.12 * speed;
+      const fx = B.activeEffects(me, t);
+      const has = (ty) => fx.filter((e) => e.type === ty);
+      const pxs = H * 0.12 * speed * (has('rush').length ? 1.5 : 1);
+      const fog = has('fog').length > 0;
+      const wob = has('wobble').length > 0;
       const nh = Math.max(8, H * 0.02);
       const Y = (tt) => jy - (tt - t) * pxs;
+      const X = (n) => (wob ? Math.sin(t * 7 + n.t * 5) * lw * 0.22 : 0);
       g.clearRect(0, 0, W, H);
-      // レーン
       for (let i = 0; i < 4; i++) {
         g.fillStyle = hexA(LANE_COLORS[i], 0.05);
         g.fillRect(i * lw, 0, lw, H);
       }
       // HP（レーンの裏・5-3）：30%以下で赤く点滅（1秒に2回）
-      const hp = st.hp;
+      const hp = B.shared ? B.shared.hp : st.hp;
       const low = hp <= 30;
       const blink = low && Math.floor(performance.now() / 250) % 2 === 0;
       g.globalAlpha = blink ? 0.32 : 0.22;
@@ -1010,14 +1370,12 @@
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.font = `900 ${Math.round(W * 0.06)}px sans-serif`;
-      g.fillText('HP', W / 2, H * 0.32);
+      g.fillText(B.shared ? 'みんなのHP' : 'HP', W / 2, H * 0.32);
       g.font = `900 ${Math.round(W * 0.17)}px sans-serif`;
       g.fillText(Math.ceil(hp) + '%', W / 2, H * 0.32 + W * 0.13);
       g.globalAlpha = 1;
-      // 区切り線
       g.fillStyle = 'rgba(255,255,255,0.12)';
       for (let i = 1; i < 4; i++) g.fillRect(i * lw - 1, 0, 2, H);
-      // 判定ラインの下（押した場所）
       for (let i = 0; i < 4; i++) {
         const fl = t - flashAt[i] < 0.15 && flashRes[i] !== 'miss';
         g.fillStyle = hexA(LANE_COLORS[i], down[i] ? 0.5 : fl ? 0.4 : 0.12);
@@ -1031,7 +1389,7 @@
 
       const horizon = t + (jy + nh * 3) / pxs;
       const notes = ses.notes;
-      // 連打（全レーン幅・しま模様）
+      const alphaAt = (y) => (fog && y < jy - H * 0.15 ? 0.16 : 1);
       for (const n of notes) {
         if (n.t > horizon) break;
         if (n.type !== 'roll' || n.done) continue;
@@ -1060,7 +1418,6 @@
         g.font = `900 ${Math.round(nh * 1.7)}px sans-serif`;
         g.fillText(`連打！ ${n.hits} / ${n.target}`, W / 2, Math.max(y2 + nh * 2, Math.min(y1 - nh * 2, (y1 + y2) / 2)));
       }
-      // 長押しの胴体
       for (const n of notes) {
         if (n.t > horizon) break;
         if (n.type !== 'hold' || (n.done && !n.holding)) continue;
@@ -1068,41 +1425,40 @@
         const y2 = Math.max(-10, Y(n.end));
         if (y1 <= y2) continue;
         const bw = lw * 0.44;
-        const x = n.lane * lw + (lw - bw) / 2;
+        const x = n.lane * lw + (lw - bw) / 2 + X(n);
         const col = n.result === 'miss' ? '#777777' : n.key ? '#ffcf3a' : LANE_COLORS[n.lane];
+        g.globalAlpha = fog ? 0.3 : 1;
         g.fillStyle = hexA(col, n.holding ? 0.75 : 0.45);
         g.fillRect(x, y2, bw, y1 - y2);
         g.fillStyle = hexA(col, 0.95);
-        g.fillRect(x - 3, y2 - 3, bw + 6, 6); // 終点
+        g.fillRect(x - 3, y2 - 3, bw + 6, 6);
+        g.globalAlpha = 1;
       }
-      // 同時押しの線
       const groups = {};
       for (const n of notes) {
         if (n.t > horizon) break;
         if (n.chord === null || n.done || n.headDone) continue;
-        const gx = groups[n.chord] || (groups[n.chord] = { a: 9, b: -1, y: Y(n.t) });
+        const gx = groups[n.chord] || (groups[n.chord] = { a: 9, b: -1, y: Y(n.t), off: X(n) });
         gx.a = Math.min(gx.a, n.lane);
         gx.b = Math.max(gx.b, n.lane);
       }
-      g.fillStyle = 'rgba(255,255,255,0.75)';
       for (const k in groups) {
         const gx = groups[k];
-        if (gx.b > gx.a) g.fillRect(gx.a * lw + lw / 2, gx.y - 2, (gx.b - gx.a) * lw, 4);
+        g.fillStyle = `rgba(255,255,255,${0.75 * alphaAt(gx.y)})`;
+        if (gx.b > gx.a) g.fillRect(gx.a * lw + lw / 2 + gx.off, gx.y - 2, (gx.b - gx.a) * lw, 4);
       }
-      // ノーツの頭
       for (const n of notes) {
         if (n.t > horizon) break;
         if (n.type === 'roll' || n.done || n.headDone) continue;
         const y = Y(n.t);
         if (y < -nh * 3) continue;
+        g.globalAlpha = alphaAt(y);
         const pad = lw * 0.07;
-        const x = n.lane * lw + pad;
+        const x = n.lane * lw + pad + X(n);
         const w = lw - pad * 2;
         if (n.key) {
-          // キーノーツ：大きく金色、近づくと予告の光（6-2）
           const h = nh * 1.6;
-          const lead = n.t - t;
-          if (lead < 1.6) {
+          if (n.t - t < 1.6) {
             g.fillStyle = `rgba(255,207,58,${0.18 + 0.14 * Math.sin(performance.now() / 90)})`;
             rr(x - 6, y - h / 2 - 6, w + 12, h + 12, 10);
             g.fill();
@@ -1113,7 +1469,6 @@
           g.strokeStyle = '#ffffff';
           g.lineWidth = 2;
           g.stroke();
-          // 両端のひし形
           g.fillStyle = '#ffffff';
           for (const cx of [x + 2, x + w - 2]) {
             g.beginPath();
@@ -1132,7 +1487,6 @@
           g.fillRect(x + 4, y - nh / 2 + 2, w - 8, Math.max(2, nh * 0.2));
         }
         if (n.type === 'hold') {
-          // 長押しの頭：下向きの山印
           g.fillStyle = 'rgba(10,8,28,0.8)';
           g.beginPath();
           g.moveTo(x + w / 2 - nh * 0.5, y - nh * 0.2);
@@ -1140,6 +1494,73 @@
           g.lineTo(x + w / 2, y + nh * 0.35);
           g.closePath();
           g.fill();
+        }
+        g.globalAlpha = 1;
+      }
+
+      /* 妨害の覆い（8-2：一度に隠せるのはレーンの50%まで） */
+      const blindLanes = [];
+      for (const e of has('blind')) for (const l of e.laneList) if (!blindLanes.includes(l) && blindLanes.length < 2) blindLanes.push(l);
+      const coverH = jy - H * 0.18; // 判定ラインの手前は見える（遊べなくはしない）
+      let used = (blindLanes.length / 4) * (coverH / jy);
+      const cover = (x, y, w, h, from) => {
+        g.fillStyle = 'rgba(12,8,30,0.97)';
+        g.fillRect(x, y, w, h);
+        g.strokeStyle = hexA(from.char.color, 0.55);
+        g.lineWidth = 3;
+        for (let k = -h; k < w; k += 22) {
+          g.beginPath();
+          g.moveTo(x + k, y + h);
+          g.lineTo(x + k + h * 0.4, y);
+          g.stroke();
+        }
+        const ic = Chars.icon(from.char, 40);
+        const s = Math.min(w, h, lw) * 0.5;
+        g.globalAlpha = 0.85;
+        g.drawImage(ic, x + w / 2 - s / 2, y + h / 2 - s / 2, s, s);
+        g.globalAlpha = 1;
+      };
+      const firstBlind = has('blind')[0];
+      for (const l of blindLanes) cover(l * lw, 0, lw, coverH, firstBlind.from);
+      const cur = has('curtain')[0];
+      if (cur) {
+        const free = 4 - blindLanes.length;
+        const maxRatio = free > 0 ? Math.max(0, ((0.5 - used) * 4) / free) : 0;
+        const ratio = Math.min(cur.ratio, maxRatio);
+        if (ratio > 0.02)
+          for (let l = 0; l < 4; l++) {
+            if (blindLanes.includes(l)) continue;
+            cover(l * lw, 0, lw, jy * ratio, cur.from);
+          }
+      }
+    }
+
+    /* ---------- 0.5秒前の予告（誰から・何が来るか） ---------- */
+    function updateWarn(t) {
+      const w = B.warnings(me, t)[0];
+      if (w) {
+        if (warnEl._fx !== w) {
+          warnEl._fx = w;
+          warnEl.replaceChildren(el('img', { src: Chars.iconURL(w.from.char, 40), alt: '' }), el('span', { text: `${w.from.name}「${w.skill.name}」${EFFECT_JA[w.type]}` }));
+        }
+        warnEl.classList.add('show');
+      } else warnEl.classList.remove('show');
+    }
+
+    /* ---------- 協奏：全員のパーフェクトが重なった瞬間（キーノーツ）に画面全体が光る ---------- */
+    function coopCheck(t) {
+      if (mode !== 'coop') return;
+      while (keyPtr < keyIdx.length && chart.notes[keyIdx[keyPtr]].t + 0.15 < t) {
+        const i = keyIdx[keyPtr++];
+        const mine = ses.notes[i].result;
+        const ok = (r) => r === 'perfect' || r === 'auto';
+        if (ok(mine) && B.players.every((p) => p.local || ok(p.results[i]))) {
+          if (t - lastFlash > 0.4) {
+            lastFlash = t;
+            flashEl.classList.remove('go');
+            void flashEl.offsetWidth;
+            flashEl.classList.add('go');
+          }
         }
       }
     }
@@ -1149,57 +1570,40 @@
       ended = true;
       GameLoop.stop();
       if (audio) audio.stop();
-      const res = {
-        songId: song.id,
-        difficulty: diff,
-        level: chart.level,
-        auto,
-        preview: !!params.preview,
-        score: st.score,
-        maxCombo: st.maxCombo,
-        counts: Object.assign({}, st.counts),
-        gameOver: st.gameOver,
-        accuracy: Judge.accuracy(st),
-        total: chart.notes.length,
-        newBest: {},
-      };
-      if (!auto) {
-        // 自己ベスト（スコア・最大コンボ・パーフェクト数）を曲×難易度ごとに保存（7-3）
-        const b = (Save.data.bests[song.id] = Save.data.bests[song.id] || {});
-        const cur = b[diff] || { score: 0, maxCombo: 0, perfect: 0 };
-        res.newBest = { score: res.score > cur.score, maxCombo: res.maxCombo > cur.maxCombo, perfect: res.counts.perfect > cur.perfect };
-        res.prevBest = cur.score;
-        b[diff] = { score: Math.max(cur.score, res.score), maxCombo: Math.max(cur.maxCombo, res.maxCombo), perfect: Math.max(cur.perfect, res.counts.perfect) };
-        if (!song.proto) {
-          const T = Save.data.totals;
-          T.plays++;
-          T.perfect += res.counts.perfect;
-          T.great += res.counts.great;
-          T.miss += res.counts.miss;
-        }
-        Save.save();
+      match.played.push(song.id);
+      // 演争：生存者が複数いて次の曲がある → 次の曲へ（HPは引き継ぐ）
+      if (mode === 'battle' && !B.over && B.alive().length > 1 && match.index < match.songs.length - 1) {
+        match.index++;
+        Nav.replace('play', {});
+        return;
       }
-      Nav.go('result', res);
+      recordMatch(match);
+      Nav.go('result', {});
     }
 
     const def = {
       head: false,
-      body: el('div', { class: 'play2' + (auto ? ' is-auto' : '') }, [
-        el('div', { class: 'hud-left' }, [judgeEl, comboEl]),
+      body: el('div', { class: 'play2' + (auto ? ' is-auto' : '') + (multi ? ' is-multi' : '') }, [
+        el('div', { class: 'hud-left' }, multi ? [plist] : [judgeEl, comboEl]),
         laneWrap,
         el('div', { class: 'hud-right' }, [
-          el('div', { class: 'hud-info' }, [el('div', { class: 'hud-title', text: song.title }), el('div', { class: 'hud-diff', text: `${diffName}　Lv ${chart.level}${auto ? '　自動演奏' : ''}` })]),
+          el('div', { class: 'hud-info' }, [
+            el('div', { class: 'hud-title', text: song.title }),
+            el('div', { class: 'hud-diff', text: `${diffName}　Lv ${chart.level}${match.songs.length > 1 ? `　${match.index + 1}/${match.songs.length}曲` : ''}${auto ? '　自動演奏' : ''}` }),
+          ]),
+          multi ? el('div', { class: 'hud-jc' }, [judgeEl, comboEl]) : null,
           el('div', { class: 'hud-score-wrap' }, [el('div', { class: 'hud-label', text: 'SCORE' }), scoreEl]),
           meterEl,
           skillEl,
+          multi ? logEl : null,
           quitBtn,
         ]),
         el('div', { class: 'touch-zones' }, zones),
+        flashEl,
       ]),
       onEnter() {
         AE.init();
-        // 開発用：自動テストから判定の状態を見るため
-        NLM._play = { ses, st, chart, when: () => when };
+        NLM._play = { ses, st, chart, match, when: () => when };
         ro = new ResizeObserver(() => {
           resize();
           draw(lastT);
@@ -1207,7 +1611,9 @@
         ro.observe(laneWrap);
         resize();
         updateHud();
-        AE.renderSong(song, (p, label) => {
+        updatePlist();
+        B.startSong(chart, match.index);
+        AE.renderSong(song, (p) => {
           overlayText.textContent = `読み込み中… ${Math.round(p * 100)}%`;
           overlayBar.style.width = p * 100 + '%';
         })
@@ -1229,8 +1635,18 @@
           lastT = t;
           if (t < 0) overlayText.textContent = String(Math.ceil(-t));
           else if (!overlay.hidden) overlay.hidden = true;
-          handleEvents(ses.update(t));
+          if (me.alive) handleEvents(ses.update(t));
+          battleEvents(B.tick(t));
+          coopCheck(t);
+          updateWarn(t);
           draw(t);
+          if (performance.now() - plistAt > 100) {
+            plistAt = performance.now();
+            updatePlist();
+            if (B.shared) updateHud();
+          }
+          // 最後の一人になったら曲の途中でも止める（7-1）
+          if (overAt !== null && t - overAt > 1.2) finish();
           if (t > Math.min(chart.duration + 1, ses.lastTime() + 2.5)) finish();
         });
       },
@@ -1258,46 +1674,169 @@
     return def;
   }
 
+  function startMatchSilently(songIds, difficulty, opts) {
+    const keep = Nav.goWithStack;
+    Nav.goWithStack = () => {};
+    const keepGo = Nav.go;
+    Nav.go = () => {};
+    try {
+      startMatch(songIds, difficulty, opts);
+    } finally {
+      Nav.goWithStack = keep;
+      Nav.go = keepGo;
+    }
+  }
+  function startMatchPreview(params) {
+    const keepChar = Session.charId;
+    Session.charId = 'neonyan';
+    startMatchSilently([params.songId], params.difficulty, { auto: true, preview: true });
+    Session.charId = keepChar;
+  }
+
+  /** 記録：自己ベスト（独奏）と、解禁条件用の累計（試作曲・自動演奏は数えない） */
+  function recordMatch(match) {
+    if (match.recorded || match.auto) return;
+    match.recorded = true;
+    const B = match.battle;
+    const me = B.players.find((p) => p.local);
+    const st = me.st;
+    const T = Save.data.totals;
+    if (match.mode === 'solo') {
+      const sid = match.songs[0];
+      const diff = match.difficulty;
+      const b = (Save.data.bests[sid] = Save.data.bests[sid] || {});
+      const cur = b[diff] || { score: 0, maxCombo: 0, perfect: 0 };
+      match.newBest = { score: st.score > cur.score, maxCombo: st.maxCombo > cur.maxCombo, perfect: st.counts.perfect > cur.perfect };
+      b[diff] = { score: Math.max(cur.score, st.score), maxCombo: Math.max(cur.maxCombo, st.maxCombo), perfect: Math.max(cur.perfect, st.counts.perfect) };
+    }
+    const real = match.played.filter((id) => !NLM.Songs.get(id).proto).length;
+    if (real) {
+      T.plays += real;
+      T.perfect += st.counts.perfect;
+      T.great += st.counts.great;
+      T.miss += st.counts.miss;
+      T.maxCombo = Math.max(T.maxCombo, st.maxCombo);
+      T.charPlays[me.char.id] = (T.charPlays[me.char.id] || 0) + real;
+      if (match.mode === 'coop') T.coopPlays += real;
+      if (match.mode === 'battle' && B.players.length > 1 && B.standings()[0].p === me) T.battleWins++;
+      if (match.mode === 'solo' && !st.gameOver) {
+        T.clears++;
+        if (match.difficulty === 'hard' || match.difficulty === 'extra') T.hardClears++;
+        if (match.difficulty === 'extra') T.extraClears++;
+      }
+    }
+    Save.save();
+  }
+
   /* =========================================================
-   * リザルト（独奏）
+   * リザルト（独奏・演争・協奏）
    * ========================================================= */
-  function ResultScreen(r) {
-    r = r || {};
-    const song = NLM.Songs.get(r.songId);
-    const mode = Session.mode;
-    const d = NLM.Songs.DIFFICULTIES.find((x) => x.id === r.difficulty) || { name: '' };
-    const c = r.counts || { perfect: 0, great: 0, miss: 0, auto: 0 };
-    const again = () => Nav.goWithStack([{ id: 'menu' }, { id: 'songSelect' }, { id: 'diffSelect' }], 'play', { songId: r.songId, difficulty: r.difficulty });
+  function ResultScreen() {
+    const match = Session.match;
+    if (!match) return { title: 'リザルト', body: placeholder('結果がありません'), onBack: () => Nav.reset('menu') };
+    const B = match.battle;
+    const me = B.players.find((p) => p.local);
+    const st = me.st;
+    const mode = match.mode;
+    const song = NLM.Songs.get(match.songs[0]);
+    const d = NLM.Songs.DIFFICULTIES.find((x) => x.id === match.difficulty) || { name: '' };
+    const Chars = NLM.Characters;
+    const c = st.counts;
+    const again = () => {
+      Session.mode = mode;
+      startMatch(match.songs.slice(), match.difficulty);
+    };
     let foot;
-    if (r.preview) foot = [button('サウンドテストへ', () => Nav.goWithStack([{ id: 'menu' }, { id: 'settings' }], 'soundTest'), { variant: 'primary', className: 'btn-next' })];
+    if (match.preview) foot = [button('サウンドテストへ', () => Nav.goWithStack([{ id: 'menu' }, { id: 'settings' }], 'soundTest'), { variant: 'primary', className: 'btn-next' })];
     else if (mode === 'coop')
-      foot = [button('次の曲へ（曲投票）', () => Nav.reset('songVote'), { variant: 'primary', className: 'btn-next' }), button('メニューへ', () => Nav.reset('menu'), { variant: 'sub' })];
-    else if (mode === 'battle') foot = [button('メニューへ', () => Nav.reset('menu'), { variant: 'primary', className: 'btn-next' })];
+      foot = [
+        button('次の曲を選ぶ', () => Nav.goWithStack([{ id: 'menu' }, { id: 'opponent' }, { id: 'cpuRules' }, { id: 'charSelect' }], 'songDiffSelect'), { variant: 'primary', className: 'btn-next' }),
+        button('メニューへ', () => Nav.reset('menu'), { variant: 'sub' }),
+      ];
+    else if (mode === 'battle')
+      foot = [button('もう一度', again, { variant: 'primary', className: 'btn-next' }), button('メニューへ', () => Nav.reset('menu'), { variant: 'sub' })];
     else
       foot = [
         button('もう一度', again, { variant: 'primary', className: 'btn-next' }),
-        button('曲選択へ', () => Nav.reset('songSelect'), { variant: 'sub' }),
+        button('曲選択へ', () => Nav.goWithStack([{ id: 'menu' }, { id: 'charSelect' }], 'songSelect'), { variant: 'sub' }),
         button('メニューへ', () => Nav.reset('menu'), { variant: 'sub' }),
       ];
-    const status = r.auto ? '自動演奏（記録なし）' : r.gameOver ? 'GAME OVER' : 'CLEAR';
     const stat = (label, val, cls, isNew) => el('div', { class: 'res-stat ' + (cls || '') }, [el('span', { class: 'res-k', text: label }), el('span', { class: 'res-v', text: val }), isNew ? el('span', { class: 'res-new', text: 'NEW' }) : null]);
-    return {
-      title: 'リザルト',
-      crumb: crumb(modeCrumb(), song && song.title),
-      back: false,
-      body: el('div', { class: 'result' }, [
-        el('div', { class: 'res-song', text: `${song ? song.title : ''}　${d.name} Lv ${r.level || '-'}` }),
-        el('div', { class: 'res-status ' + (r.gameOver ? 'is-over' : 'is-clear'), text: status }),
-        el('div', { class: 'res-score' }, [el('span', { class: 'res-k', text: 'SCORE' }), el('span', { class: 'res-big', text: (r.score || 0).toLocaleString() }), r.newBest && r.newBest.score ? el('span', { class: 'res-new', text: '自己ベスト更新！' }) : null]),
+    const nb = match.newBest || {};
+    let body;
+    if (mode === 'battle') {
+      const ranks = B.standings();
+      const win = ranks[0].p;
+      body = el('div', { class: 'result result-battle' }, [
+        el('div', { class: 'res-song', text: `${match.songs.map((id) => NLM.Songs.get(id).title).join(' → ')}　${d.name}` }),
+        el('div', { class: 'res-winner' }, [
+          el('img', { src: Chars.iconURL(win.char, 96, 'win'), alt: '' }),
+          el('div', {}, [el('div', { class: 'res-k', text: 'WINNER' }), el('div', { class: 'res-status is-clear', text: win.name })]),
+        ]),
+        el(
+          'div',
+          { class: 'rank-list', style: { '--n': ranks.length, '--cols': ranks.length > 12 ? 2 : 1, '--rows': Math.max(4, Math.ceil(ranks.length / (ranks.length > 12 ? 2 : 1))) } },
+          ranks.map(({ rank, p }) =>
+            el('div', { class: 'rank-row' + (p.local ? ' is-me' : '') + (p.alive ? '' : ' is-out') }, [
+              el('span', { class: 'rank-no', text: rank }),
+              el('img', { src: Chars.iconURL(p.char, 40, p.alive ? (rank === 1 ? 'win' : 'idle') : 'lose'), alt: '' }),
+              el('span', { class: 'rank-name', text: p.name }),
+              el('span', { class: 'rank-st', text: p.alive ? `生存 HP ${Math.ceil(p.st.hp)}%` : `脱落（${p.elim.song + 1}曲目）` }),
+              el('span', { class: 'rank-score', text: p.st.score.toLocaleString() }),
+            ])
+          )
+        ),
+      ]);
+    } else if (mode === 'coop') {
+      let good = 0;
+      let all = 0;
+      for (const p of B.players) {
+        const k = p.st.counts;
+        good += k.perfect + k.auto;
+        all += k.perfect + k.auto + k.great + k.miss;
+      }
+      const harmony = all ? (good / all) * 100 : 0;
+      body = el('div', { class: 'result result-battle' }, [
+        el('div', { class: 'res-song', text: `${song.title}　${d.name}` }),
+        el('div', { class: 'res-status ' + (st.gameOver ? 'is-over' : 'is-clear'), text: st.gameOver ? 'GAME OVER' : 'CLEAR' }),
+        el('div', { class: 'res-score' }, [el('span', { class: 'res-k', text: '合奏度' }), el('span', { class: 'res-big', text: harmony.toFixed(1) + '%' })]),
+        el(
+          'div',
+          { class: 'rank-list', style: { '--n': B.players.length, '--cols': B.players.length > 12 ? 2 : 1, '--rows': Math.max(4, Math.ceil(B.players.length / (B.players.length > 12 ? 2 : 1))) } },
+          B.players.map((p) =>
+            el('div', { class: 'rank-row' + (p.local ? ' is-me' : '') }, [
+              el('img', { src: Chars.iconURL(p.char, 40, st.gameOver ? 'lose' : 'win'), alt: '' }),
+              el('span', { class: 'rank-name', text: p.name }),
+              el('span', { class: 'rank-st', text: `P ${p.st.counts.perfect + p.st.counts.auto}　G ${p.st.counts.great}　M ${p.st.counts.miss}` }),
+              el('span', { class: 'rank-score', text: p.st.score.toLocaleString() }),
+            ])
+          )
+        ),
+      ]);
+    } else {
+      const status = match.auto ? '自動演奏（記録なし）' : st.gameOver ? 'GAME OVER' : 'CLEAR';
+      body = el('div', { class: 'result' }, [
+        el('div', { class: 'res-song', text: `${song.title}　${d.name} Lv ${NLM.Chart.generate(song, match.difficulty).level}` }),
+        el('div', { class: 'res-head' }, [
+          el('img', { class: 'res-char', src: Chars.iconURL(me.char, 96, st.gameOver ? 'lose' : 'win'), alt: '' }),
+          el('div', { class: 'res-status ' + (st.gameOver ? 'is-over' : 'is-clear'), text: status }),
+        ]),
+        el('div', { class: 'res-score' }, [el('span', { class: 'res-k', text: 'SCORE' }), el('span', { class: 'res-big', text: st.score.toLocaleString() }), nb.score ? el('span', { class: 'res-new', text: '自己ベスト更新！' }) : null]),
         el('div', { class: 'res-grid' }, [
-          stat('PERFECT', c.perfect, 'c-perfect', r.newBest && r.newBest.perfect),
+          stat('PERFECT', c.perfect, 'c-perfect', nb.perfect),
           stat('GREAT', c.great, 'c-great'),
           stat('MISS', c.miss, 'c-miss'),
           stat('AUTO', c.auto, 'c-auto'),
-          stat('最大コンボ', r.maxCombo || 0, '', r.newBest && r.newBest.maxCombo),
-          stat('達成率', ((r.accuracy || 0) * 100).toFixed(1) + '%'),
+          stat('最大コンボ', st.maxCombo, '', nb.maxCombo),
+          stat('達成率', (NLM.Judge.accuracy(st) * 100).toFixed(1) + '%'),
         ]),
-      ]),
+      ]);
+    }
+    return {
+      title: mode === 'battle' ? '演争の結果' : mode === 'coop' ? '協奏の結果' : 'リザルト',
+      crumb: modeCrumb(),
+      back: false,
+      body,
       foot: el('div', { class: 'foot-row' }, foot),
       onBack: () => Nav.reset('menu'),
     };

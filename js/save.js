@@ -9,7 +9,9 @@
   const NLM = (window.NLM = window.NLM || {});
 
   const STORAGE_KEY = 'neonlight-musics.save';
-  const SAVE_VERSION = 1;
+  const SAVE_VERSION = 2;
+  // 最初から解禁されているキャラ（8-1）。曲はフェーズ6で追加
+  const INITIAL_CHARS = ['neonyan', 'signa', 'kirari'];
 
   /** 保存データの初期値。項目を増やすときはここに足すだけでよい */
   function defaults() {
@@ -25,8 +27,8 @@
           system: 70, // システム音
         },
       },
-      // 解禁状況（キャラ・曲のIDの配列）。初期解禁はフェーズ4・6・7で設定
-      unlocked: { characters: [], songs: [] },
+      // 解禁状況（キャラ・曲のIDの配列）
+      unlocked: { characters: INITIAL_CHARS.slice(), songs: [] },
       // 自己ベスト：bests[曲ID][難易度] = { score, maxCombo, perfect }
       bests: {},
       // 解禁条件の進み具合：progress[条件ID] = 数値など
@@ -38,6 +40,12 @@
         great: 0,
         miss: 0,
         battleWins: 0,
+        clears: 0, // 独奏でクリア
+        hardClears: 0, // ハード以上をクリア
+        extraClears: 0, // エクストラをクリア
+        coopPlays: 0, // 協奏で遊んだ曲数
+        maxCombo: 0,
+        charPlays: {}, // キャラごとに遊んだ曲数
       },
     };
   }
@@ -49,7 +57,13 @@
    * キーは「変換後のバージョン」。
    */
   const migrations = {
-    // 現在はバージョン1のみ
+    // バージョン2：最初の3体を解禁（バージョン1ではキャラが未実装で空だった）
+    2: (d) => {
+      d.unlocked = d.unlocked || {};
+      const cur = Array.isArray(d.unlocked.characters) ? d.unlocked.characters : [];
+      d.unlocked.characters = [...new Set(INITIAL_CHARS.concat(cur))];
+      return d;
+    },
   };
 
   /** 初期値(base)に保存データ(src)を重ねる。型が違う値は初期値を採用 */

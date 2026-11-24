@@ -1238,3 +1238,518 @@ body {
 .play-overlay[hidden] {
   display: none;
 }
+
+/* ---------------- ルール設定（フェーズ4） ---------------- */
+.rules-panel .set-row {
+  grid-template-columns: minmax(6.5em, 1fr) 3fr;
+}
+.toggles {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.btn-toggle {
+  --c: var(--neon-purple);
+  font-size: calc(var(--fs-btn) * 0.7);
+  padding: 0.3em 0.9em;
+  min-height: 40px;
+  box-shadow: none;
+  opacity: 0.55;
+}
+.btn-toggle.is-on {
+  --c: var(--neon-pink);
+  opacity: 1;
+  box-shadow: 0 0 10px var(--c), 0 0 22px var(--c);
+}
+.btn-step5 {
+  width: 2.6em;
+  font-size: calc(var(--fs-btn) * 0.6);
+}
+.rules-total {
+  text-align: center;
+  color: var(--neon-cyan);
+  font-size: var(--fs-body);
+}
+
+/* ---------------- キャラ選択・一覧 ---------------- */
+.char-layout {
+  flex: 1;
+  min-height: 0;
+  width: min(100%, 1100px);
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: clamp(8px, 2vmin, 20px);
+}
+.char-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 6px;
+  min-height: 0;
+}
+.btn-char {
+  padding: 2px;
+  min-height: 0;
+  border-width: 2px;
+  box-shadow: none;
+  gap: 0;
+  overflow: hidden;
+}
+.btn-char img {
+  width: min(56px, 90%);
+  aspect-ratio: 1;
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  object-fit: contain;
+}
+.char-name {
+  font-size: clamp(9px, 1.4vmin + 2px, 14px);
+  white-space: nowrap;
+  text-shadow: none;
+}
+.btn-char.is-locked img {
+  filter: brightness(0.25) saturate(0);
+}
+.btn-char.is-locked .char-name {
+  color: var(--text-dim);
+}
+.btn-char.is-sel {
+  background: color-mix(in srgb, var(--c) 30%, rgba(10, 8, 28, 0.8));
+  box-shadow: 0 0 10px var(--c), 0 0 22px var(--c);
+}
+.char-detail {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: clamp(8px, 1.6vmin, 16px);
+  border: 2px solid rgba(178, 107, 255, 0.45);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.char-stage {
+  flex: 1;
+  min-height: 80px;
+  display: grid;
+  grid-template-columns: 3fr 1fr;
+  gap: 6px;
+}
+.char-big {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.char-smalls {
+  display: grid;
+  grid-template-rows: repeat(3, 1fr);
+  min-height: 0;
+}
+.char-small {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.char-info {
+  font-size: calc(var(--fs-body) * 0.88);
+  font-weight: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.char-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: calc(var(--fs-btn) * 0.9);
+  font-weight: 900;
+}
+.char-no,
+.char-motif,
+.char-line.dim {
+  color: var(--text-dim);
+  font-size: calc(var(--fs-body) * 0.85);
+}
+.char-lock {
+  color: var(--neon-red);
+  font-size: calc(var(--fs-body) * 0.85);
+}
+.char-line b {
+  color: var(--neon-yellow);
+}
+.char-coop {
+  color: var(--neon-red);
+  margin-left: 6px;
+}
+@media (max-aspect-ratio: 1/1) {
+  .char-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .char-grid {
+    grid-auto-rows: auto;
+  }
+  .btn-char img {
+    width: min(44px, 80%);
+    flex: none;
+  }
+}
+@media (max-height: 500px) {
+  .char-motif {
+    display: none;
+  }
+  .char-info {
+    font-size: calc(var(--fs-body) * 0.78);
+  }
+  .char-name {
+    display: none;
+  }
+}
+
+/* ---------------- 曲の複数選択 ---------------- */
+.btn-song {
+  position: relative;
+}
+.btn-song.is-on {
+  background: color-mix(in srgb, var(--c) 30%, rgba(10, 8, 28, 0.8));
+}
+.pick-badge {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  font-size: 0.8em;
+  color: #fff;
+  text-shadow: 0 0 8px var(--c);
+}
+
+/* ---------------- 対戦中の表示 ---------------- */
+.play2.is-multi .hud-left {
+  padding-top: 0;
+  align-items: stretch;
+  justify-content: center;
+}
+.plist {
+  --n: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 100%;
+  min-height: 0;
+  font-size: clamp(9px, calc(70vh / var(--n) * 0.45), 16px);
+}
+.pl-row {
+  --c: #fff;
+  display: grid;
+  grid-template-columns: 2.2em minmax(0, 1fr) 3em;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 6px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--c) 40%, transparent);
+  background: rgba(10, 8, 28, 0.6);
+  min-height: 0;
+  flex: 1 1 0;
+  max-height: 3.6em;
+}
+.pl-icon {
+  grid-row: 1 / span 2;
+  width: 2.2em;
+  height: 2.2em;
+}
+.pl-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pl-pct {
+  grid-row: 1 / span 2;
+  grid-column: 3;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.pl-bar {
+  height: 0.45em;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.pl-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--c);
+  transition: width 0.2s;
+}
+.pl-row.is-me {
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+.pl-row.is-out {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+.pl-row.is-skill {
+  animation: row-skill 0.7s ease-out;
+}
+@keyframes row-skill {
+  0% {
+    box-shadow: 0 0 16px var(--c), 0 0 32px var(--c);
+    background: color-mix(in srgb, var(--c) 45%, rgba(10, 8, 28, 0.6));
+  }
+}
+.plist.is-many .pl-name {
+  display: none;
+}
+.plist.is-many .pl-row {
+  grid-template-columns: 2.2em minmax(0, 1fr) 2.6em;
+}
+.hud-jc {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hud-log {
+  font-size: calc(var(--fs-body) * 0.8);
+  color: var(--text-dim);
+  min-height: 3.6em;
+}
+.play-warn {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 2px solid var(--neon-red);
+  border-radius: 10px;
+  background: rgba(30, 6, 14, 0.9);
+  color: #fff;
+  font-size: calc(var(--fs-body) * 0.85);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+}
+.play-warn img {
+  width: 28px;
+  height: 28px;
+}
+.play-warn.show {
+  opacity: 1;
+  animation: warn-pulse 0.25s ease-in-out infinite alternate;
+}
+@keyframes warn-pulse {
+  to {
+    box-shadow: 0 0 14px var(--neon-red);
+  }
+}
+.play-dead {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 3, 12, 0.7);
+  color: var(--text-dim);
+  font-size: var(--fs-btn);
+}
+.play-dead[hidden] {
+  display: none;
+}
+.coop-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  background: #fff;
+  opacity: 0;
+}
+.coop-flash.go {
+  animation: coop-flash 0.1s linear; /* 画面全体のフラッシュは0.1秒以内（13-3） */
+}
+@keyframes coop-flash {
+  0% {
+    opacity: 0.35;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.ov-song {
+  color: var(--text-dim);
+  font-size: var(--fs-body);
+}
+@media (max-aspect-ratio: 1/1) {
+  .play2.is-multi {
+    grid-template-rows: auto auto 1fr;
+    grid-template-areas: 'right right' 'left left' 'lanes lanes';
+  }
+  .play2.is-multi .hud-right {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .play2.is-multi .hud-log,
+  .play2.is-multi .hud-info {
+    display: none;
+  }
+  .play2.is-multi .plist {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+    max-height: 18vh;
+    overflow: hidden;
+    font-size: 10px;
+  }
+  .play2.is-multi .pl-row {
+    max-height: none;
+    grid-template-columns: 2.2em 1fr;
+  }
+  .play2.is-multi .pl-name {
+    display: none;
+  }
+  .play2.is-multi .pl-pct {
+    grid-row: 1;
+    grid-column: 2;
+  }
+  .play2.is-multi .pl-bar {
+    grid-column: 2;
+  }
+}
+
+/* ---------------- 対戦の結果 ---------------- */
+.result-battle {
+  flex: 1;
+  min-height: 0;
+}
+.res-winner,
+.res-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.res-winner img,
+.res-char {
+  width: clamp(56px, 12vmin, 96px);
+  height: clamp(56px, 12vmin, 96px);
+}
+.rank-list {
+  --n: 8;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: clamp(9px, calc(50vh / var(--n) * 0.45), 16px);
+}
+.rank-row {
+  display: grid;
+  grid-template-columns: 2em 2.2em minmax(0, 1fr) auto 5em;
+  align-items: center;
+  gap: 8px;
+  padding: 1px 8px;
+  border-radius: 8px;
+  background: rgba(10, 8, 28, 0.6);
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: 3em;
+}
+.result-battle .rank-row:not(:has(.rank-no)) {
+  grid-template-columns: 2.2em minmax(0, 1fr) auto 5em;
+}
+.rank-row img {
+  width: 2.2em;
+  height: 2.2em;
+}
+.rank-row.is-me {
+  border: 1px solid #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+.rank-row.is-out .rank-name {
+  color: var(--text-dim);
+}
+.rank-no {
+  color: var(--neon-yellow);
+  text-align: right;
+}
+.rank-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rank-st {
+  color: var(--text-dim);
+  font-size: 0.9em;
+}
+.rank-score {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 参加者一覧：人数が多い時は2列・行の数で文字の大きさを決める（13-2） */
+.plist {
+  --cols: 1;
+  --rows: 8;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  height: 100%;
+  max-height: min(100%, calc(var(--rows) * 3.4em));
+  align-self: center;
+  width: 100%;
+  font-size: clamp(8px, calc(86vh / var(--rows) * 0.34), 15px);
+}
+.pl-row {
+  max-height: none;
+}
+.rank-list {
+  --cols: 1;
+  --rows: 8;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  column-gap: 12px;
+  font-size: clamp(8px, calc(48vh / var(--rows) * 0.45), 16px);
+  max-height: calc(var(--rows) * 3em);
+}
+.rank-row {
+  max-height: none;
+}
+@media (max-aspect-ratio: 1/1) {
+  .play2.is-multi .plist.is-many {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    grid-auto-rows: auto;
+    height: auto;
+  }
+  .play2.is-multi .plist.is-many .pl-pct {
+    display: none;
+  }
+  .play2.is-multi .plist.is-many .pl-row {
+    grid-template-columns: 1fr;
+    padding: 1px;
+  }
+  .play2.is-multi .plist.is-many .pl-icon {
+    grid-row: 1;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+  }
+  .play2.is-multi .plist.is-many .pl-bar {
+    grid-column: 1;
+    grid-row: 2;
+  }
+}
+.plist {
+  font-size: clamp(8px, calc(84vh / var(--rows) * 0.28), 15px);
+}
+/* 中断ボタンは右上に固定（スマホのタップエリアと重ならないように） */
+.play2 .btn-quit {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 5;
+}
