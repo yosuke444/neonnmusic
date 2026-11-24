@@ -1753,3 +1753,343 @@ body {
   right: 0;
   z-index: 5;
 }
+
+/* =========================================================
+ * フェーズ5：ネオン・サイバー街のUI（大きく、見やすく）
+ * ========================================================= */
+:root {
+  --font-ja: 'M PLUS Rounded 1c', 'Hiragino Maru Gothic ProN', 'BIZ UDPGothic', 'Meiryo', sans-serif;
+  --font-en: 'Orbitron', 'M PLUS Rounded 1c', sans-serif;
+  --fs-title: clamp(26px, 4.6vmin + 10px, 56px);
+  --fs-btn: clamp(19px, 2.8vmin + 9px, 34px);
+  --fs-body: clamp(15px, 1.7vmin + 8px, 21px);
+}
+html,
+body {
+  font-family: var(--font-ja);
+  font-weight: 800;
+}
+#bg,
+#fx {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+#bg {
+  z-index: 0;
+  background: #05040c;
+}
+#bg::after {
+  content: none;
+}
+#fx {
+  z-index: 1;
+}
+#app {
+  z-index: 2;
+}
+
+/* ネオン文字（光のにじみ付き） */
+.neon-title {
+  font-family: var(--font-ja);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 2px #fff, 0 0 8px var(--c), 0 0 18px var(--c), 0 0 36px var(--c), 0 0 64px color-mix(in srgb, var(--c) 60%, transparent);
+}
+.crumb {
+  font-family: var(--font-en);
+  font-size: calc(var(--fs-body) * 0.8);
+  letter-spacing: 0.12em;
+  color: var(--neon-cyan);
+  text-shadow: 0 0 6px var(--neon-cyan);
+}
+
+/* ボタン：ネオン管で縁取り。押せるボタンは光り、押すと強く光ってはじける */
+.btn {
+  border-width: 3px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(30, 18, 64, 0.78), rgba(8, 6, 22, 0.9));
+  box-shadow: 0 0 4px #fff inset, 0 0 0 1px rgba(255, 255, 255, 0.35) inset, 0 0 10px var(--c), 0 0 24px color-mix(in srgb, var(--c) 60%, transparent),
+    inset 0 0 18px color-mix(in srgb, var(--c) 35%, transparent);
+  text-shadow: 0 0 4px #fff, 0 0 12px var(--c);
+  font-weight: 900;
+  letter-spacing: 0.03em;
+}
+.btn:hover,
+.btn:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 0 6px #fff inset, 0 0 0 1px rgba(255, 255, 255, 0.6) inset, 0 0 14px var(--c), 0 0 36px var(--c), 0 0 70px color-mix(in srgb, var(--c) 45%, transparent),
+    inset 0 0 26px color-mix(in srgb, var(--c) 55%, transparent);
+}
+.btn.pop {
+  animation: btn-pop 0.32s ease-out;
+}
+@keyframes btn-pop {
+  0% {
+    background: color-mix(in srgb, var(--c) 85%, #fff);
+    box-shadow: 0 0 30px #fff, 0 0 60px var(--c), 0 0 110px var(--c);
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.btn:disabled {
+  background: rgba(10, 8, 24, 0.6);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.35);
+}
+.btn-mode {
+  font-size: clamp(24px, 3.8vmin + 10px, 48px);
+}
+.btn-mode .btn-label {
+  text-shadow: 0 0 4px #fff, 0 0 14px var(--c), 0 0 30px var(--c);
+}
+.btn-mode::before {
+  content: attr(data-en);
+  font-family: var(--font-en);
+  font-size: 0.42em;
+  letter-spacing: 0.3em;
+  color: var(--c);
+  text-shadow: 0 0 8px var(--c);
+}
+.btn-note {
+  font-weight: 800;
+  font-size: 0.52em;
+  color: #d9d0f5;
+}
+
+/* パネル：サイバー風の角かっこ付きの枠 */
+.settings-panel,
+.placeholder,
+.st-panel,
+.char-detail,
+.res-stat {
+  position: relative;
+  background: linear-gradient(180deg, rgba(22, 14, 52, 0.82), rgba(8, 6, 22, 0.88));
+  box-shadow: 0 0 18px rgba(45, 226, 230, 0.18), inset 0 0 24px rgba(178, 107, 255, 0.12);
+  backdrop-filter: blur(2px);
+}
+.settings-panel::before,
+.char-detail::before,
+.st-panel::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  pointer-events: none;
+  background: linear-gradient(var(--neon-cyan), var(--neon-cyan)) top left / 22px 3px no-repeat,
+    linear-gradient(var(--neon-cyan), var(--neon-cyan)) top left / 3px 22px no-repeat,
+    linear-gradient(var(--neon-pink), var(--neon-pink)) bottom right / 22px 3px no-repeat,
+    linear-gradient(var(--neon-pink), var(--neon-pink)) bottom right / 3px 22px no-repeat;
+  filter: drop-shadow(0 0 4px var(--neon-cyan));
+}
+
+/* タイトル */
+.logo-ja {
+  font-size: clamp(30px, 7vmin + 6px, 92px);
+  animation: neon-on 1.4s steps(1) both;
+}
+@keyframes neon-on {
+  /* 点灯の瞬き（1秒に3回以下） */
+  0% {
+    opacity: 0.15;
+  }
+  35% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 0.35;
+  }
+  80% {
+    opacity: 1;
+  }
+}
+.logo-en {
+  font-family: var(--font-en);
+  font-weight: 900;
+}
+.btn-start .btn-label {
+  font-family: var(--font-en);
+  letter-spacing: 0.2em;
+}
+.btn-start {
+  animation: start-breathe 2s ease-in-out infinite;
+}
+@keyframes start-breathe {
+  50% {
+    box-shadow: 0 0 6px #fff inset, 0 0 16px var(--c), 0 0 48px var(--c), 0 0 90px color-mix(in srgb, var(--c) 50%, transparent);
+  }
+}
+
+/* 数字は英字のネオン書体で */
+.hud-score,
+.hud-combo,
+.hud-judge,
+.res-big,
+.res-v,
+.diff-lv,
+.set-value,
+.clock-big,
+.rank-score,
+.ov-text {
+  font-family: var(--font-en);
+}
+
+/* ---------- 演奏画面 ---------- */
+.lane-wrap {
+  background: rgba(3, 2, 10, 0.84);
+  border-left: 3px solid rgba(45, 226, 230, 0.55);
+  border-right: 3px solid rgba(255, 62, 165, 0.55);
+  box-shadow: -6px 0 22px rgba(45, 226, 230, 0.35), 6px 0 22px rgba(255, 62, 165, 0.35);
+}
+.hud-judge {
+  font-size: clamp(30px, 6.4vmin, 72px);
+  font-weight: 900;
+}
+.hud-judge.pop {
+  animation: judge-pop2 0.3s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+@keyframes judge-pop2 {
+  0% {
+    transform: scale(1.6);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.j-perfect {
+  background: linear-gradient(180deg, #fff 30%, #ffe94a 60%, #ff3ea5);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 6px #ff3ea5) drop-shadow(0 0 14px #ffe94a);
+  text-shadow: none;
+}
+.hud-combo {
+  font-size: clamp(22px, 4.4vmin, 48px);
+}
+.hud-combo.milestone {
+  animation: combo-ms 0.7s ease-out;
+}
+@keyframes combo-ms {
+  0% {
+    transform: scale(1.8);
+    color: #fff;
+    text-shadow: 0 0 20px var(--neon-yellow), 0 0 40px var(--neon-pink);
+  }
+}
+.hud-score {
+  font-size: clamp(26px, 5.4vmin, 58px);
+}
+.meter-bar {
+  border-width: 3px;
+  box-shadow: 0 0 10px var(--neon-purple);
+}
+.hud-meter.full .meter-bar {
+  box-shadow: 0 0 22px #fff, 0 0 40px var(--neon-pink);
+}
+
+/* スキル発動の瞬間：キャラの発動ポーズ（レーンには重ねない） */
+.skill-pose {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+}
+.skill-pose canvas {
+  width: clamp(110px, 24vmin, 240px);
+  height: clamp(110px, 24vmin, 240px);
+}
+.skill-pose .sp-name {
+  font-size: clamp(20px, 4vmin, 42px);
+  font-weight: 900;
+  color: #fff;
+  white-space: nowrap;
+  text-shadow: 0 0 6px #fff, 0 0 16px var(--c), 0 0 34px var(--c);
+}
+.skill-pose.show {
+  animation: pose-show 0.6s ease-out forwards;
+}
+@keyframes pose-show {
+  0% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* 脱落：レーンが割れて暗転 */
+.lane-wrap.is-dead {
+  border-color: #333;
+  box-shadow: none;
+  filter: saturate(0.2) brightness(0.7);
+  transition: filter 0.8s;
+}
+
+/* 結果画面の勝者 */
+.res-winner canvas {
+  width: clamp(120px, 26vmin, 260px);
+  height: clamp(120px, 26vmin, 260px);
+}
+.win-cv {
+  width: clamp(110px, 24vmin, 240px);
+  height: clamp(110px, 24vmin, 240px);
+}
+.res-winner .res-status {
+  font-size: clamp(40px, 9vmin, 100px);
+  text-shadow: 0 0 4px #fff, 0 0 14px var(--c), 0 0 34px var(--c), 0 0 60px var(--c);
+}
+.res-winner .res-k {
+  font-family: var(--font-en);
+  letter-spacing: 0.3em;
+  color: var(--neon-yellow);
+  text-shadow: 0 0 8px var(--neon-yellow);
+}
+/* 数字は「0」が読みやすい書体に（Orbitron は 0 に斜線が入るため） */
+:root {
+  --font-num: 'Russo One', 'Orbitron', sans-serif;
+}
+.hud-score,
+.hud-combo,
+.res-big,
+.res-v,
+.diff-lv,
+.set-value,
+.clock-big,
+.rank-score,
+.ov-text,
+.pl-pct {
+  font-family: var(--font-num);
+  letter-spacing: 0.02em;
+}
+.skill-pose canvas {
+  width: auto;
+  height: auto;
+}
+.skill-pose .sp-name {
+  line-height: 1.1;
+}
+@media (max-aspect-ratio: 1/1) {
+  /* 縦画面：スキル名は発動ポーズに出すので、レーンの上に文字を出さない（13-3） */
+  .play2 .hud-skill {
+    display: none;
+  }
+}

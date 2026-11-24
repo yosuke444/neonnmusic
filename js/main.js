@@ -100,6 +100,13 @@
     },
     _show(id, params) {
       if (this.cur && this.cur.def.onLeave) this.cur.def.onLeave();
+      const C = NLM.FX && NLM.FX.City;
+      if (C) {
+        C.clock = null;
+        C.allLit = false;
+        C.dimTarget = 0;
+        C.tint = null;
+      }
       const def = Screens[id](params);
       this.cur = { id, params, def };
 
@@ -203,6 +210,7 @@
     title() {
       const start = () => {
         AE.init(); // 音声はユーザー操作の中で起動する必要がある
+        setTimeout(() => AE.sfx('start'), 30);
         Nav.reset('menu');
       };
       return {
@@ -231,7 +239,7 @@
         button(MODES[id].name, () => {
           Session.mode = id;
           Nav.go(next);
-        }, { variant: 'primary', sub, color: MODES[id].color, className: 'btn-mode' });
+        }, { variant: 'primary', sub, color: MODES[id].color, className: 'btn-mode', en: MODES[id].en });
       return {
         title: 'メインメニュー',
         body: el('div', { class: 'menu-layout' }, [
@@ -1156,6 +1164,13 @@
     const down = [false, false, false, false];
     const flashAt = [-9, -9, -9, -9];
     const flashRes = ['', '', '', ''];
+    const FX = NLM.FX;
+    const City = FX.City;
+    let hpTrail = 100; // HPバーが削れる演出用（遅れて追いつく）
+    let hpTrailAt = 0;
+    let lastCount = 4;
+    let warnShown = null;
+    let cracks = null; // 脱落：レーンの割れ目
 
     const canvas = el('canvas', { class: 'play-canvas' });
     const g = canvas.getContext('2d');
@@ -1164,6 +1179,10 @@
     const scoreEl = el('div', { class: 'hud-score', text: '0' });
     const meterFill = el('div', { class: 'meter-fill' });
     const meterEl = el('div', { class: 'hud-meter' }, [el('div', { class: 'meter-label', text: `SKILL　${me.char.skill.name}` }), el('div', { class: 'meter-bar' }, [meterFill])]);
+    // スキル発動の瞬間：キャラの発動ポーズ（レーンの横に大きく・0.6秒）
+    const poseCv = el('canvas', {});
+    const poseName = el('div', { class: 'sp-name' });
+    const poseEl = el('div', { class: 'skill-pose' }, [poseCv, poseName]);
     if (me.noSkill) meterEl.hidden = true; // 協奏：攻撃系のキャラはメーターを出さない（7-2）
     const skillEl = el('div', { class: 'hud-skill' });
     const logEl = el('div', { class: 'hud-log' });
@@ -1261,22 +1280,150 @@
       for (const e of out) {
         if (e.type === 'skill') {
           flashRow(e.p);
-          if (e.p === me) showSkill(`スキル発動！ ${e.skill.name}`);
-          else if (multi) {
+          if (e.p === me) {
+            showSkill(`スキル発動！ ${e.skill.name}`);
+            skillPose(e.skill);
+          } else if (multi) {
             const tg = e.targets.includes(me) && e.skill.target !== 'self' ? ' → あなた' : '';
             log(`${e.p.name}「${e.skill.name}」${tg}`);
           }
+          skillBeams(e);
         } else if (e.type === 'elim') {
           log(`${e.p.name} 脱落`);
+          const rr = rows.get(e.p);
+          if (rr) {
+            const c = FX.center(rr.row);
+            FX.burst(c.x, c.y, '#ff4b5c', 20, 240, 0);
+          }
           if (e.p === me) {
             deadEl.hidden = false;
             laneWrap.classList.add('is-dead');
-          }
+            City.dimTarget = 1; // ネオンが消える
+            AE.sfx('elim');
+            const r = laneWrap.getBoundingClientRect();
+            FX.burst(r.left + r.width / 2, r.top + r.height * 0.5, '#9aa0b8', 50, 300, 0);
+            makeCracks();
+          } else AE.sfx('hurt');
         } else if (e.type === 'over') {
           overAt = lastT;
         } else if (e.type === 'judge') {
           e.p.lastRes = e.result;
         }
+      }
+    }
+    /* ---------- スキル：発動の瞬間（ポーズ・スキル名・効果音・街の色） ---------- */
+    function skillPose(skill) {
+      const r = laneWrap.getBoundingClientRect();
+      const host = def.body.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const leftSpace = r.left - host.left;
+      let sz = Math.min(240, Math.max(110, Math.min(innerWidth, innerHeight) * 0.24));
+      const nameH = 46;
+      // 横に余白がなければレーンの上の余白に収まる大きさまで縮める（レーンには重ねない）
+      if (leftSpace <= sz * 0.9) sz = Math.max(56, Math.min(sz, r.top - host.top - nameH - 6));
+      poseCv.width = poseCv.height = Math.round(sz * dpr);
+      poseCv.style.width = poseCv.style.height = sz + 'px';
+      const pg = poseCv.getContext('2d');
+      pg.clearRect(0, 0, poseCv.width, poseCv.height);
+      Chars.draw(pg, me.char, poseCv.width / 2, poseCv.height / 2, poseCv.width * 0.92, 'skill');
+      poseName.textContent = skill.name;
+      poseEl.style.setProperty('--c', me.char.color);
+      // レーンには重ねない：横に余白があれば左、なければレーンの上の余白
+      if (leftSpace > sz * 0.9) {
+        poseEl.style.left = Math.max(0, r.left - host.left - sz - 12) + 'px';
+        poseEl.style.top = r.top - host.top + r.height * 0.2 + 'px';
+      } else {
+        poseEl.style.left = r.left - host.left + r.width / 2 - sz / 2 + 'px';
+        poseEl.style.top = Math.max(0, r.top - host.top - sz - nameH - 4) + 'px';
+      }
+      poseEl.classList.remove('show');
+      void poseEl.offsetWidth;
+      poseEl.classList.add('show');
+      City.tint = me.char.color;
+      City.tintUntil = performance.now() + 600;
+      AE.sfx('skill');
+      const pc = FX.center(poseEl);
+      FX.ring(pc.x, pc.y, me.char.color, sz * 1.2, 0.5, 8);
+      FX.burst(pc.x, pc.y, me.char.color, 50, 500, 0);
+      meterEl.classList.add('full');
+      setTimeout(() => meterEl.classList.remove('full'), 300);
+    }
+    /** 誰かがスキルを使った時：その人の欄から対象者へ光の線（13-2） */
+    function skillBeams(e) {
+      if (!multi) return;
+      const from = rows.get(e.p);
+      if (!from) return;
+      const a = FX.center(from.row);
+      for (const q of e.targets) {
+        if (q === e.p) continue;
+        const to = q === me ? FX.center(laneWrap) : rows.get(q) && FX.center(rows.get(q).row);
+        if (to) FX.beam(a.x, a.y, to.x, to.y, e.p.char.color, 0.5);
+      }
+      if (e.p !== me && e.targets.includes(me) && e.skill.target !== 'self') AE.sfx('warn');
+    }
+    function makeCracks() {
+      cracks = [];
+      for (let k = 0; k < 7; k++) {
+        const pts = [[Math.random(), Math.random() * 0.8]];
+        for (let i = 0; i < 6; i++) {
+          const p = pts[pts.length - 1];
+          pts.push([p[0] + (Math.random() - 0.5) * 0.25, p[1] + Math.random() * 0.12]);
+        }
+        cracks.push(pts);
+      }
+    }
+
+    /* ---------- 叩いた時の演出（13-3）：派手なものはレーンの外側・背景・レーンの裏で ---------- */
+    function laneGeo(lane) {
+      const r = laneWrap.getBoundingClientRect();
+      const lw = r.width / 4;
+      return { r, lw, x: r.left + lw * (lane + 0.5), y: r.top + r.height * 0.86 };
+    }
+    function hitFx(e) {
+      const res = e.result;
+      const n = e.note;
+      if (n.type === 'roll') {
+        const { r } = laneGeo(0);
+        if (res !== 'miss') FX.burst(r.left + r.width / 2, r.top + r.height * 0.5, '#ffa53a', 30, 420, 0);
+        return;
+      }
+      const { r, lw, x, y } = laneGeo(e.lane);
+      const col = n.key ? '#ffcf3a' : LANE_COLORS[e.lane];
+      const side = e.lane < 2 ? -1 : 1;
+      const edgeX = side < 0 ? r.left : r.right;
+      if (res === 'perfect' || res === 'auto') {
+        FX.ring(x, y, col, lw * 2.2, 0.32, 6); // 光の輪（レーンの外へ広がる）
+        FX.ring(x, y, '#ffffff', lw * 1.4, 0.22, 3);
+        FX.burst(edgeX, y, col, 16, 520, side); // 火花（レーンの外側へ）
+        AE.sfx('perfect');
+      } else if (res === 'great') {
+        FX.ring(x, y, col, lw * 1.4, 0.26, 4);
+        FX.burst(edgeX, y, col, 6, 360, side);
+      } else {
+        AE.sfx('miss');
+        hpTrailAt = lastT + 0.35;
+      }
+      if (n.key && res !== 'miss') {
+        // キーノーツ：背景の看板が一斉に点灯＋画面（背景）が拍に合わせて揺れる
+        City.litUntil = performance.now() + 380;
+        FX.shake(10, 0.3);
+        FX.burst(r.left, y, '#ffcf3a', 24, 600, -1);
+        FX.burst(r.right, y, '#ffcf3a', 24, 600, 1);
+        FX.ring(r.left + r.width / 2, y, '#ffcf3a', r.width * 1.3, 0.45, 8);
+        AE.sfx('key');
+      }
+    }
+    function comboFx() {
+      const c = st.combo;
+      if (c >= 50 && (c === 50 || c % 100 === 0)) {
+        // コンボ50・100・200…：街全体が明るくなる
+        City.bright = 1;
+        comboEl.classList.remove('milestone');
+        void comboEl.offsetWidth;
+        comboEl.classList.add('milestone');
+        const p = FX.center(comboEl);
+        FX.burst(p.x, p.y, '#ffe94a', 40, 380, 0);
+        AE.sfx('combo');
       }
     }
     function handleEvents(evs) {
@@ -1289,7 +1436,15 @@
             flashAt[e.lane] = lastT;
             flashRes[e.lane] = e.result;
           }
-        } else if (e.type === 'holdBreak') showJudge('miss');
+          hitFx(e);
+          if (e.result !== 'miss') comboFx();
+        } else if (e.type === 'holdBreak') {
+          showJudge('miss');
+          flashAt[e.lane] = lastT;
+          flashRes[e.lane] = 'miss';
+          AE.sfx('miss');
+          hpTrailAt = lastT + 0.35;
+        }
       }
       battleEvents(B.onLocal(me, evs, lastT));
       updateHud();
@@ -1299,6 +1454,7 @@
       if (down[lane]) return;
       down[lane] = true;
       if (!canPlay()) return;
+      AE.sfx('tap'); // 打鍵音
       const t = songTime(ts);
       lastT = Math.max(lastT, t);
       handleEvents(ses.press(lane, t));
@@ -1365,6 +1521,14 @@
       g.globalAlpha = blink ? 0.32 : 0.22;
       g.fillStyle = low ? '#ff3b4f' : '#2de2e6';
       g.fillRect(0, H * (1 - hp / 100), W, (H * hp) / 100);
+      // HPバーが削れる演出：減った分が白→赤で残り、少し遅れて消える
+      if (t > hpTrailAt) hpTrail += (hp - hpTrail) * 0.12;
+      if (hp > hpTrail) hpTrail = hp;
+      if (hpTrail - hp > 0.3) {
+        g.globalAlpha = 0.55;
+        g.fillStyle = '#ffffff';
+        g.fillRect(0, H * (1 - hpTrail / 100), W, (H * (hpTrail - hp)) / 100);
+      }
       g.globalAlpha = 0.25;
       g.fillStyle = low ? '#ff8090' : '#ffffff';
       g.textAlign = 'center';
@@ -1376,6 +1540,20 @@
       g.globalAlpha = 1;
       g.fillStyle = 'rgba(255,255,255,0.12)';
       for (let i = 1; i < 4; i++) g.fillRect(i * lw - 1, 0, 2, H);
+      // レーンの裏の光（ノーツより先に描く＝ノーツの上には重ねない）
+      for (let i = 0; i < 4; i++) {
+        const age = t - flashAt[i];
+        if (age < 0 || age > 0.25) continue;
+        const k = 1 - age / 0.25;
+        const res = flashRes[i];
+        const col = res === 'miss' ? '#ff2b45' : LANE_COLORS[i];
+        const top = jy - H * (res === 'perfect' || res === 'auto' ? 0.75 : 0.45);
+        const gr = g.createLinearGradient(0, jy, 0, top);
+        gr.addColorStop(0, hexA(col, (res === 'miss' ? 0.45 : res === 'great' ? 0.22 : 0.35) * k));
+        gr.addColorStop(1, hexA(col, 0));
+        g.fillStyle = gr;
+        g.fillRect(i * lw, top, lw, jy - top);
+      }
       for (let i = 0; i < 4; i++) {
         const fl = t - flashAt[i] < 0.15 && flashRes[i] !== 'miss';
         g.fillStyle = hexA(LANE_COLORS[i], down[i] ? 0.5 : fl ? 0.4 : 0.12);
@@ -1520,6 +1698,16 @@
         g.drawImage(ic, x + w / 2 - s / 2, y + h / 2 - s / 2, s, s);
         g.globalAlpha = 1;
       };
+      // 脱落：レーンの割れ目
+      if (cracks) {
+        g.strokeStyle = 'rgba(220,225,255,0.55)';
+        g.lineWidth = 2;
+        for (const pts of cracks) {
+          g.beginPath();
+          pts.forEach(([px, py], i) => (i ? g.lineTo(px * W, py * H) : g.moveTo(px * W, py * H)));
+          g.stroke();
+        }
+      }
       const firstBlind = has('blind')[0];
       for (const l of blindLanes) cover(l * lw, 0, lw, coverH, firstBlind.from);
       const cur = has('curtain')[0];
@@ -1600,6 +1788,7 @@
         ]),
         el('div', { class: 'touch-zones' }, zones),
         flashEl,
+        poseEl,
       ]),
       onEnter() {
         AE.init();
@@ -1622,6 +1811,9 @@
             when = AE.now() + 3.2; // 3秒のカウントダウン
             audio = AE.playRendered(r, when, 0);
             overlay.classList.add('count');
+            // 背景の看板が曲の拍に合わせて点滅（13-1）
+            City.clock = () => (AE.now() - when) / chart.compiled.spb;
+            City._bps = chart.compiled.bpm / 60;
           })
           .catch((e) => {
             overlayText.textContent = '読み込みに失敗しました：' + e.message;
@@ -1633,8 +1825,17 @@
           }
           const t = now - when;
           lastT = t;
-          if (t < 0) overlayText.textContent = String(Math.ceil(-t));
-          else if (!overlay.hidden) overlay.hidden = true;
+          if (t < 0) {
+            const c = Math.ceil(-t);
+            overlayText.textContent = String(c);
+            if (c !== lastCount && c <= 3) {
+              lastCount = c;
+              AE.sfx('count');
+            }
+          } else if (!overlay.hidden) {
+            overlay.hidden = true;
+            AE.sfx('go');
+          }
           if (me.alive) handleEvents(ses.update(t));
           battleEvents(B.tick(t));
           coopCheck(t);
@@ -1764,14 +1965,17 @@
     const stat = (label, val, cls, isNew) => el('div', { class: 'res-stat ' + (cls || '') }, [el('span', { class: 'res-k', text: label }), el('span', { class: 'res-v', text: val }), isNew ? el('span', { class: 'res-new', text: 'NEW' }) : null]);
     const nb = match.newBest || {};
     let body;
+    let winner = null;
+    const winCv = el('canvas', { class: 'win-cv' });
     if (mode === 'battle') {
       const ranks = B.standings();
       const win = ranks[0].p;
+      winner = win;
       body = el('div', { class: 'result result-battle' }, [
         el('div', { class: 'res-song', text: `${match.songs.map((id) => NLM.Songs.get(id).title).join(' → ')}　${d.name}` }),
         el('div', { class: 'res-winner' }, [
-          el('img', { src: Chars.iconURL(win.char, 96, 'win'), alt: '' }),
-          el('div', {}, [el('div', { class: 'res-k', text: 'WINNER' }), el('div', { class: 'res-status is-clear', text: win.name })]),
+          winCv,
+          el('div', {}, [el('div', { class: 'res-k', text: 'WINNER' }), el('div', { class: 'res-status is-clear', text: win.name, style: { '--c': win.char.color } })]),
         ]),
         el(
           'div',
@@ -1832,6 +2036,7 @@
         ]),
       ]);
     }
+    let fwTimer = null;
     return {
       title: mode === 'battle' ? '演争の結果' : mode === 'coop' ? '協奏の結果' : 'リザルト',
       crumb: modeCrumb(),
@@ -1839,6 +2044,41 @@
       body,
       foot: el('div', { class: 'foot-row' }, foot),
       onBack: () => Nav.reset('menu'),
+      onEnter() {
+        const FX = NLM.FX;
+        const celebrate = mode === 'battle' || (!st.gameOver && !match.auto);
+        if (celebrate) {
+          // 勝利：街中のネオンが点灯＋花火
+          FX.City.allLit = true;
+          AE.sfx('win');
+          const cols = ['#ff3ea5', '#2de2e6', '#ffe94a', '#b26bff', '#5dff8f'];
+          let k = 0;
+          fwTimer = setInterval(() => {
+            FX.firework(innerWidth * (0.12 + Math.random() * 0.76), innerHeight * (0.12 + Math.random() * 0.35), cols[k % cols.length]);
+            if (++k > 16) clearInterval(fwTimer);
+          }, 280);
+        } else FX.City.dimTarget = 0.6;
+        if (winner) {
+          // 勝者のキャラを大きく（勝利の表情・手書きの揺れ）
+          GameLoop.start(() => {
+            const r = winCv.getBoundingClientRect();
+            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            if (winCv.width !== Math.round(r.width * dpr)) {
+              winCv.width = Math.round(r.width * dpr);
+              winCv.height = Math.round(r.height * dpr);
+            }
+            const g = winCv.getContext('2d');
+            g.clearRect(0, 0, winCv.width, winCv.height);
+            const sz = Math.min(winCv.width, winCv.height);
+            const bounce = Math.abs(Math.sin(performance.now() / 260)) * sz * 0.06;
+            Chars.draw(g, winner.char, winCv.width / 2, winCv.height / 2 + sz * 0.04 - bounce, sz * 0.86, 'win', { boil: true });
+          });
+        }
+      },
+      onLeave() {
+        clearInterval(fwTimer);
+        GameLoop.stop();
+      },
     };
   }
 
@@ -1846,6 +2086,7 @@
    * 起動
    * ========================================================= */
   Save.load();
+  NLM.FX.start();
   // 長押しメニュー・ダブルタップ拡大を抑える
   document.addEventListener('contextmenu', (e) => {
     if (e.target.closest('.touch-zone, .lane')) e.preventDefault();

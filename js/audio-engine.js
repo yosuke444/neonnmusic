@@ -175,6 +175,110 @@
       o.stop(t + 0.3);
     },
 
+    /**
+     * 効果音（13-4：すべて合成。打鍵音は短く、メニューはネオン風の電子音）
+     * 効果音 → 「効果音」の音量、メニュー系 → 「システム音」の音量
+     */
+    sfx(name) {
+      const ctx = this.ctx;
+      if (!ctx || ctx.state !== 'running') return;
+      const t = ctx.currentTime + 0.003;
+      const tone = (bus, type, f0, f1, dur, gain, at) => {
+        const s = t + (at || 0);
+        const o = ctx.createOscillator();
+        const gn = ctx.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(f0, s);
+        if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, s + dur);
+        gn.gain.setValueAtTime(0.0001, s);
+        gn.gain.exponentialRampToValueAtTime(gain, s + 0.004);
+        gn.gain.exponentialRampToValueAtTime(0.0001, s + dur);
+        o.connect(gn).connect(this.buses[bus]);
+        o.start(s);
+        o.stop(s + dur + 0.02);
+      };
+      const hiss = (bus, hp, dur, gain, at) => {
+        const s = t + (at || 0);
+        const n = ctx.createBufferSource();
+        if (!this._noise) {
+          const b = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+          const d = b.getChannelData(0);
+          for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+          this._noise = b;
+        }
+        n.buffer = this._noise;
+        const f = ctx.createBiquadFilter();
+        f.type = 'highpass';
+        f.frequency.value = hp;
+        const gn = ctx.createGain();
+        gn.gain.setValueAtTime(gain, s);
+        gn.gain.exponentialRampToValueAtTime(0.0001, s + dur);
+        n.connect(f).connect(gn).connect(this.buses[bus]);
+        n.start(s);
+        n.stop(s + dur + 0.02);
+      };
+      switch (name) {
+        case 'tap': // 打鍵音：短く小さく
+          hiss('se', 5000, 0.025, 0.18);
+          tone('se', 'sine', 2100, 1500, 0.03, 0.07);
+          break;
+        case 'perfect':
+          tone('se', 'sine', 1568, 1568, 0.09, 0.05);
+          tone('se', 'sine', 2349, 2349, 0.07, 0.03);
+          break;
+        case 'miss':
+          tone('se', 'triangle', 110, 70, 0.12, 0.12);
+          break;
+        case 'key':
+          tone('se', 'square', 1046, 1046, 0.06, 0.035);
+          tone('se', 'square', 1568, 1568, 0.08, 0.03, 0.03);
+          break;
+        case 'combo':
+          [1046, 1318, 1568, 2093].forEach((f, i) => tone('se', 'square', f, f, 0.07, 0.035, i * 0.045));
+          break;
+        case 'skill':
+          tone('se', 'sawtooth', 260, 1400, 0.3, 0.06);
+          hiss('se', 2500, 0.35, 0.08);
+          tone('se', 'sine', 1760, 1760, 0.25, 0.05, 0.2);
+          break;
+        case 'warn':
+          tone('se', 'square', 1320, 1320, 0.05, 0.05);
+          tone('se', 'square', 1320, 1320, 0.05, 0.05, 0.09);
+          break;
+        case 'hurt':
+          hiss('se', 900, 0.2, 0.08);
+          tone('se', 'sawtooth', 500, 120, 0.2, 0.04);
+          break;
+        case 'elim':
+          tone('se', 'square', 700, 60, 0.7, 0.07);
+          hiss('se', 400, 0.6, 0.08, 0.05);
+          break;
+        case 'win':
+          [523, 659, 784, 1046, 1318].forEach((f, i) => tone('se', 'square', f, f, 0.16, 0.05, i * 0.09));
+          tone('se', 'sawtooth', 1046, 1046, 0.6, 0.03, 0.45);
+          break;
+        case 'count':
+          tone('system', 'square', 880, 880, 0.09, 0.06);
+          break;
+        case 'go':
+          tone('system', 'square', 1760, 1760, 0.2, 0.06);
+          break;
+        case 'move':
+          tone('system', 'sine', 1500, 1700, 0.03, 0.05);
+          break;
+        case 'select':
+          tone('system', 'square', 880, 1760, 0.07, 0.05);
+          hiss('system', 6000, 0.06, 0.05);
+          break;
+        case 'back':
+          tone('system', 'square', 1320, 660, 0.07, 0.045);
+          break;
+        case 'start':
+          [660, 880, 1320, 1760].forEach((f, i) => tone('system', 'square', f, f, 0.09, 0.05, i * 0.06));
+          break;
+      }
+    },
+
     /** メトロノームのクリック（時計確認用） */
     click(t, accent) {
       this._tone(t, [accent ? 1760 : 1175], 'square', 0.03, accent ? 0.16 : 0.1, 'drum');
