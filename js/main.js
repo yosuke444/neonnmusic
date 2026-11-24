@@ -23,6 +23,7 @@
     opponent: null, // friend / cpu
     role: null, // host / guest
     difficulty: null,
+    songId: null,
   };
 
   /* =========================================================
@@ -76,6 +77,11 @@
       if (this.cur && this.cur.def.onBack) return this.cur.def.onBack();
       const prev = this.stack.pop();
       if (prev) this._show(prev.id, prev.params);
+    },
+    /** 履歴を指定して移動（もう一度遊ぶ・別の画面へ戻る など） */
+    goWithStack(stack, id, params) {
+      this.stack = stack.map((x) => ({ id: x.id, params: x.params || {} }));
+      this._show(id, params || {});
     },
     /** 履歴を消して移動（メニューを土台にする） */
     reset(id, params) {
@@ -341,64 +347,29 @@
       };
     },
 
-    /* ---------- 曲・難易度選択（演争CPU） ---------- */
+    /* ---------- 曲・難易度選択（演争CPU）：独奏と同じ選び方（フェーズ4で調整） ---------- */
     songDiffSelect() {
-      return {
-        title: '曲・難易度選択',
-        crumb: modeCrumb(),
-        body: [placeholder(['曲を選ぶ（仮表示）フェーズ6で曲を追加']), difficultyButtons(() => Nav.go('play'))],
-      };
+      return SongSelectScreen();
     },
 
     /* ---------- 曲選択（独奏） ---------- */
     songSelect() {
-      return {
-        title: '曲選択',
-        crumb: modeCrumb(),
-        color: MODES.solo.color,
-        body: placeholder(['解禁済みの曲から選ぶ', '（仮表示）フェーズ6で曲を追加']),
-        foot: nextButton('決定 → 難易度選択へ', () => Nav.go('diffSelect')),
-      };
+      return SongSelectScreen();
     },
 
     /* ---------- 難易度選択（独奏） ---------- */
     diffSelect() {
-      return {
-        title: '難易度選択',
-        crumb: modeCrumb(),
-        color: MODES.solo.color,
-        body: [placeholder('難易度ごとの数字はフェーズ3で表示'), difficultyButtons(() => Nav.go('play'))],
-      };
+      return DiffSelectScreen();
     },
 
-    /* ---------- バトル / 演奏（フェーズ1：音声時計の確認画面） ---------- */
-    play() {
-      return PlayScreen();
+    /* ---------- バトル / 演奏 ---------- */
+    play(params) {
+      return PlayScreen(params);
     },
 
     /* ---------- リザルト ---------- */
-    result() {
-      const mode = Session.mode;
-      const foot =
-        mode === 'coop'
-          ? [
-              button('次の曲へ（曲投票）', () => Nav.reset('songVote'), { variant: 'primary', className: 'btn-next' }),
-              button('メニューへ', () => Nav.reset('menu'), { variant: 'sub' }),
-            ]
-          : mode === 'solo'
-          ? [
-              button('曲選択へ', () => Nav.reset('songSelect'), { variant: 'primary', className: 'btn-next' }),
-              button('メニューへ', () => Nav.reset('menu'), { variant: 'sub' }),
-            ]
-          : [button('メニューへ', () => Nav.reset('menu'), { variant: 'primary', className: 'btn-next' })];
-      return {
-        title: 'リザルト',
-        crumb: modeCrumb(),
-        back: false,
-        body: placeholder(['（仮表示）成績の表示はフェーズ3・4で実装']),
-        foot: el('div', { class: 'foot-row' }, foot),
-        onBack: () => Nav.reset('menu'),
-      };
+    result(params) {
+      return ResultScreen(params);
     },
 
     /* ---------- キャラ一覧 ---------- */
@@ -556,6 +527,7 @@
     const posEl = el('div', { class: 'st-pos', text: '停止中' });
     const statusEl = el('div', { class: 'st-status' });
     const secRow = el('div', { class: 'st-sections' });
+    const chartRow = el('div', { class: 'st-charts' });
     const panel = el('div', { class: 'st-panel' });
 
     const playBtn = button('▶ 再生', () => playLive(0), { variant: 'primary', sub: 'パート別に消せる', id: 'st-play' });
@@ -665,6 +637,18 @@
       titleEl.textContent = `${idx + 1}/${songs.length}　${d.title}`;
       metaEl.textContent = `${d.genre}　BPM ${d.bpm}　${d.key}　${d.duration}`;
       statusEl.textContent = '';
+      // 譜面確認（11章）：譜面を自動演奏で再生
+      chartRow.replaceChildren(
+        el('span', { class: 'st-hint', text: '譜面確認（自動演奏）' }),
+        ...NLM.Songs.DIFFICULTIES.map((d, i) => {
+          const ch = NLM.Chart.generate(song(), d.id);
+          return button(`${d.name} Lv${ch.level}`, () => Nav.go('play', { songId: song().id, difficulty: d.id, auto: true, preview: true }), {
+            className: 'btn-sec',
+            color: DIFF_COLORS[i],
+            id: 'chart-' + d.id,
+          });
+        })
+      );
       drawSections();
       drawPanel();
     }
@@ -721,6 +705,17 @@
           el('div', { class: 'st-memo' }, [
             el('p', { text: `コード進行（ドロップ）：${d.prog}` }),
             el('p', { text: `構成：${d.structure}` }),
+            el('p', { text: '譜面：' }),
+            el(
+              'ul',
+              { class: 'st-chartstats' },
+              NLM.Songs.DIFFICULTIES.map((x) => {
+                const s2 = NLM.Chart.generate(song(), x.id).stats;
+                return el('li', {
+                  text: `${x.name} Lv${NLM.Chart.generate(song(), x.id).level}：ノーツ ${s2.count}（1秒あたり ${s2.nps.toFixed(1)}、最大 ${s2.peak.toFixed(1)}）同時押し ${s2.chords} 長押し ${s2.holds} 連打 ${s2.rolls} キーノーツ ${s2.keys}`,
+                });
+              })
+            ),
             el('pre', { text: song().memo || '（メモなし）' }),
           ])
         );
@@ -742,6 +737,7 @@
         el('div', { class: 'st-transport' }, [playBtn, renderBtn, stopBtn, posEl]),
         statusEl,
         secRow,
+        chartRow,
         tabRow,
         panel,
       ]),
@@ -780,47 +776,183 @@
   };
 
   /* =========================================================
-   * 演奏画面（フェーズ1の仮）：音声の時計で動くゲームループの確認
-   * - 120BPMのクリックを音声時刻で予約して鳴らす
-   * - F・G・H・J（スマホは下部のタップエリア）の入力を、
-   *   event.timeStamp → 音声時刻に換算して「拍とのずれ」を表示
-   * - キーリピートは無視（4章）
+   * 曲の一覧（独奏・演争CPUで共通）
    * ========================================================= */
-  function PlayScreen() {
-    const BPM = 120;
-    const SPB = 60 / BPM;
-    const COUNT_IN = 3; // 3秒のカウントダウン
-    let start = null; // 音声時刻での開始時刻
-    let scheduledBeat = 0;
-    let lastBeat = -1;
-    const pressed = [false, false, false, false];
+  function playableSongs() {
+    const all = NLM.Songs.all();
+    const unlocked = Save.data.unlocked.songs;
+    const real = all.filter((s) => !s.proto && unlocked.includes(s.id));
+    // 本編の曲ができるまでは、開発確認用に試作曲を出す（試作曲は本編では遊べない）
+    return real.length ? real : all.filter((s) => s.proto);
+  }
+  function bestOf(songId, diff) {
+    const b = Save.data.bests[songId];
+    return (b && b[diff]) || null;
+  }
+  const LANE_COLORS = ['#ff3ea5', '#2de2e6', '#ffe94a', '#b26bff'];
 
-    const timeEl = el('div', { class: 'clock-big', text: '--' });
-    const beatEl = el('div', { class: 'clock-beat' });
-    const hitEl = el('div', { class: 'clock-hit', text: 'F・G・H・J を押す（スマホは下のエリアをタップ）' });
-    const infoEl = el('div', { class: 'clock-info-small' });
-
-    const lanes = LANE_LABELS.map((k, i) =>
-      el('div', { class: 'lane', style: { '--c': `var(--lane-${i})` } }, [el('div', { class: 'lane-key', text: k })])
-    );
-    const zones = LANE_LABELS.map((k, i) => el('div', { class: 'touch-zone', style: { '--c': `var(--lane-${i})` }, dataset: { lane: i } }));
-
-    const press = (lane, ts) => {
-      if (pressed[lane]) return;
-      pressed[lane] = true;
-      lanes[lane].classList.add('pressed');
-      if (start === null) return;
-      const at = AE.perfToAudio(ts);
-      const songT = at - start;
-      const off = (songT - Math.round(songT / SPB) * SPB) * 1000;
-      hitEl.textContent = `レーン ${LANE_LABELS[lane]}　音声時刻 ${at.toFixed(3)}秒　拍とのずれ ${off >= 0 ? '+' : ''}${off.toFixed(0)}ms`;
+  function SongSelectScreen() {
+    const songs = playableSongs();
+    const PER = 6;
+    let page = Math.floor(Math.max(0, songs.findIndex((s) => s.id === Session.songId)) / PER);
+    const grid = el('div', { class: 'song-grid' });
+    const pageEl = el('div', { class: 'page-info' });
+    const prevB = button('◀', () => {
+      page--;
+      draw();
+    }, { className: 'btn-arrow' });
+    const nextB = button('▶', () => {
+      page++;
+      draw();
+    }, { className: 'btn-arrow' });
+    function draw() {
+      const pages = Math.max(1, Math.ceil(songs.length / PER));
+      page = (page + pages) % pages;
+      grid.replaceChildren(
+        ...songs.slice(page * PER, page * PER + PER).map((s, i) => {
+          const bests = NLM.Songs.DIFFICULTIES.map((d) => bestOf(s.id, d.id)).filter(Boolean);
+          const top = bests.length ? Math.max(...bests.map((b) => b.score)) : null;
+          const sub = `${s.genre}　BPM ${s.bpm}${top !== null ? '　ベスト ' + top.toLocaleString() : ''}${s.proto ? '　［試作・開発中のみ］' : ''}`;
+          return button(s.title, () => {
+            Session.songId = s.id;
+            Nav.go('diffSelect');
+          }, { className: 'btn-song', sub, color: LANE_COLORS[(page * PER + i) % 4] });
+        })
+      );
+      pageEl.textContent = pages > 1 ? `${page + 1} / ${pages}` : '';
+      prevB.style.visibility = nextB.style.visibility = pages > 1 ? 'visible' : 'hidden';
+    }
+    draw();
+    return {
+      title: '曲選択',
+      crumb: modeCrumb(),
+      color: MODES.solo.color,
+      body: songs.length
+        ? el('div', { class: 'song-select' }, [el('div', { class: 'song-page' }, [prevB, grid, nextB]), pageEl])
+        : placeholder('遊べる曲がありません'),
     };
-    const release = (lane) => {
-      pressed[lane] = false;
-      lanes[lane].classList.remove('pressed');
-    };
+  }
 
-    // スマホ：複数指の同時タッチ（Pointer Events）
+  function DiffSelectScreen() {
+    const song = NLM.Songs.get(Session.songId) || playableSongs()[0];
+    Session.songId = song.id;
+    const btns = NLM.Songs.DIFFICULTIES.map((d, i) => {
+      const ch = NLM.Chart.generate(song, d.id);
+      const b = bestOf(song.id, d.id);
+      const btn = button(d.name, () => {
+        Session.difficulty = d.id;
+        Nav.go('play', { songId: song.id, difficulty: d.id });
+      }, { className: 'btn-diff btn-diff2', color: DIFF_COLORS[i], sub: `ノーツ ${ch.stats.count}${b ? '　ベスト ' + b.score.toLocaleString() : ''}`, id: 'diff-' + d.id });
+      btn.prepend(el('span', { class: 'diff-lv', text: ch.level }));
+      return btn;
+    });
+    return {
+      title: '難易度選択',
+      crumb: crumb(modeCrumb(), song.title),
+      color: MODES.solo.color,
+      body: [el('div', { class: 'diff-song', text: `${song.title}　／　${song.genre}　BPM ${song.bpm}` }), el('div', { class: 'grid grid-4' }, btns)],
+    };
+  }
+
+  /* =========================================================
+   * 演奏画面（5・6章、7-3）
+   * - 判定はすべて judge.js、時刻は音声時刻（AE.now / event.timeStamp）
+   * - HPはレーンの裏にバーと%（5-3）
+   * - フェーズ3：スキルは仮で「HP回復」のみ。演出は最小限（フェーズ5で仕上げ）
+   * ========================================================= */
+  const JUDGE_TEXT = { perfect: 'PERFECT', great: 'GREAT', miss: 'MISS', auto: 'AUTO' };
+  const PROVISIONAL_HEAL = 15;
+
+  function hexA(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+
+  function PlayScreen(params) {
+    params = params || {};
+    const song = NLM.Songs.get(params.songId || Session.songId) || playableSongs()[0];
+    const diff = params.difficulty || Session.difficulty || 'normal';
+    const auto = !!params.auto;
+    const chart = NLM.Chart.generate(song, diff);
+    const Judge = NLM.Judge;
+    const st = Judge.createState({ mode: 'solo' });
+    const ses = Judge.createSession(chart, st, { auto });
+    const speed = Save.data.settings.noteSpeed;
+    const diffName = NLM.Songs.DIFFICULTIES.find((d) => d.id === diff).name;
+
+    let when = null;
+    let audio = null;
+    let ended = false;
+    let ro = null;
+    let lastT = -3;
+    const down = [false, false, false, false];
+    const flashAt = [-9, -9, -9, -9];
+    const flashRes = ['', '', '', ''];
+
+    const canvas = el('canvas', { class: 'play-canvas' });
+    const g = canvas.getContext('2d');
+    const judgeEl = el('div', { class: 'hud-judge' });
+    const comboEl = el('div', { class: 'hud-combo' });
+    const scoreEl = el('div', { class: 'hud-score', text: '0' });
+    const meterFill = el('div', { class: 'meter-fill' });
+    const meterEl = el('div', { class: 'hud-meter' }, [el('div', { class: 'meter-label', text: 'SKILL' }), el('div', { class: 'meter-bar' }, [meterFill])]);
+    const skillEl = el('div', { class: 'hud-skill' });
+    const overlayText = el('div', { class: 'ov-text', text: '読み込み中…' });
+    const overlayBar = el('div', { class: 'ov-bar-fill' });
+    const overlay = el('div', { class: 'play-overlay' }, [overlayText, el('div', { class: 'ov-bar' }, [overlayBar])]);
+    const laneWrap = el('div', { class: 'lane-wrap' }, [canvas, overlay]);
+    const zones = [0, 1, 2, 3].map((i) => el('div', { class: 'touch-zone', style: { '--c': `var(--lane-${i})` } }));
+    const quitBtn = button('中断', () => Nav.back(), { variant: 'sub', className: 'btn-quit' });
+
+    const songTime = (ts) => AE.perfToAudio(ts) - when;
+
+    function showJudge(res) {
+      judgeEl.textContent = JUDGE_TEXT[res];
+      judgeEl.className = 'hud-judge j-' + res;
+      void judgeEl.offsetWidth;
+      judgeEl.classList.add('pop');
+    }
+    function updateHud() {
+      scoreEl.textContent = st.score.toLocaleString();
+      comboEl.textContent = st.combo >= 2 ? `${st.combo} COMBO` : '';
+      const r = st.meter / st.meterMax;
+      meterFill.style.setProperty('--m', Math.min(1, r));
+      meterEl.classList.toggle('near', r >= 0.85); // 予告：満タン直前に脈打つ
+    }
+    function doSkill() {
+      // フェーズ3の仮スキル：HP回復
+      st.hp = Math.min(Judge.HP_MAX, st.hp + PROVISIONAL_HEAL);
+      skillEl.textContent = `スキル発動！ HP回復 +${PROVISIONAL_HEAL}`;
+      skillEl.classList.remove('show');
+      void skillEl.offsetWidth;
+      skillEl.classList.add('show');
+    }
+    function handleEvents(evs) {
+      if (!evs.length) return;
+      for (const e of evs) {
+        if (e.type === 'judge') {
+          showJudge(e.result);
+          if (e.note.type !== 'roll') {
+            flashAt[e.lane] = lastT;
+            flashRes[e.lane] = e.result;
+          }
+        } else if (e.type === 'holdBreak') showJudge('miss');
+        else if (e.type === 'skill') doSkill();
+      }
+      updateHud();
+    }
+    function press(lane, ts) {
+      if (down[lane]) return;
+      down[lane] = true;
+      if (auto || when === null || ended) return;
+      handleEvents(ses.press(lane, songTime(ts)));
+    }
+    function release(lane, ts) {
+      if (!down[lane]) return;
+      down[lane] = false;
+      if (auto || when === null || ended) return;
+      handleEvents(ses.release(lane, songTime(ts)));
+    }
     zones.forEach((z, i) => {
       z.addEventListener('pointerdown', (e) => {
         e.preventDefault();
@@ -829,80 +961,345 @@
         } catch (_) {}
         press(i, e.timeStamp);
       });
-      const up = () => release(i);
+      const up = (e) => release(i, e.timeStamp);
       z.addEventListener('pointerup', up);
       z.addEventListener('pointercancel', up);
       z.addEventListener('lostpointercapture', up);
     });
 
-    const isMode = MODES[Session.mode] || MODES.solo;
+    function resize() {
+      const r = laneWrap.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.max(1, Math.round(r.width * dpr));
+      canvas.height = Math.max(1, Math.round(r.height * dpr));
+    }
+    function rr(x, y, w, h, r) {
+      g.beginPath();
+      g.moveTo(x + r, y);
+      g.arcTo(x + w, y, x + w, y + h, r);
+      g.arcTo(x + w, y + h, x, y + h, r);
+      g.arcTo(x, y + h, x, y, r);
+      g.arcTo(x, y, x + w, y, r);
+      g.closePath();
+    }
 
-    return {
-      title: Session.mode === 'battle' ? 'バトル' : '演奏',
-      crumb: modeCrumb(),
-      color: isMode.color,
-      body: el('div', { class: 'play-wrap' }, [
-        el('div', { class: 'play-info' }, [
-          el('div', { class: 'clock-label', text: '音声の時計（120BPM のクリック）' }),
-          timeEl,
-          beatEl,
-          hitEl,
-          infoEl,
-          placeholder('（仮表示）ノーツ・判定はフェーズ3で実装'),
+    /* ---------- 描画 ---------- */
+    function draw(t) {
+      const W = canvas.width;
+      const H = canvas.height;
+      const lw = W / 4;
+      const jy = H * 0.86;
+      const pxs = H * 0.12 * speed;
+      const nh = Math.max(8, H * 0.02);
+      const Y = (tt) => jy - (tt - t) * pxs;
+      g.clearRect(0, 0, W, H);
+      // レーン
+      for (let i = 0; i < 4; i++) {
+        g.fillStyle = hexA(LANE_COLORS[i], 0.05);
+        g.fillRect(i * lw, 0, lw, H);
+      }
+      // HP（レーンの裏・5-3）：30%以下で赤く点滅（1秒に2回）
+      const hp = st.hp;
+      const low = hp <= 30;
+      const blink = low && Math.floor(performance.now() / 250) % 2 === 0;
+      g.globalAlpha = blink ? 0.32 : 0.22;
+      g.fillStyle = low ? '#ff3b4f' : '#2de2e6';
+      g.fillRect(0, H * (1 - hp / 100), W, (H * hp) / 100);
+      g.globalAlpha = 0.25;
+      g.fillStyle = low ? '#ff8090' : '#ffffff';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.font = `900 ${Math.round(W * 0.06)}px sans-serif`;
+      g.fillText('HP', W / 2, H * 0.32);
+      g.font = `900 ${Math.round(W * 0.17)}px sans-serif`;
+      g.fillText(Math.ceil(hp) + '%', W / 2, H * 0.32 + W * 0.13);
+      g.globalAlpha = 1;
+      // 区切り線
+      g.fillStyle = 'rgba(255,255,255,0.12)';
+      for (let i = 1; i < 4; i++) g.fillRect(i * lw - 1, 0, 2, H);
+      // 判定ラインの下（押した場所）
+      for (let i = 0; i < 4; i++) {
+        const fl = t - flashAt[i] < 0.15 && flashRes[i] !== 'miss';
+        g.fillStyle = hexA(LANE_COLORS[i], down[i] ? 0.5 : fl ? 0.4 : 0.12);
+        g.fillRect(i * lw + 3, jy + 5, lw - 6, H - jy - 8);
+        g.fillStyle = hexA(LANE_COLORS[i], 0.9);
+        g.font = `900 ${Math.round(Math.min(lw * 0.3, (H - jy) * 0.45))}px sans-serif`;
+        g.fillText(LANE_LABELS[i], i * lw + lw / 2, jy + (H - jy) / 2 + 2);
+      }
+      g.fillStyle = '#ffffff';
+      g.fillRect(0, jy - 2, W, 4);
+
+      const horizon = t + (jy + nh * 3) / pxs;
+      const notes = ses.notes;
+      // 連打（全レーン幅・しま模様）
+      for (const n of notes) {
+        if (n.t > horizon) break;
+        if (n.type !== 'roll' || n.done) continue;
+        const y1 = Math.min(Y(n.t), jy);
+        const y2 = Math.max(Y(n.end), -10);
+        if (y1 <= y2) continue;
+        g.fillStyle = 'rgba(255,140,40,0.22)';
+        g.fillRect(0, y2, W, y1 - y2);
+        g.save();
+        g.beginPath();
+        g.rect(0, y2, W, y1 - y2);
+        g.clip();
+        g.strokeStyle = 'rgba(255,190,90,0.35)';
+        g.lineWidth = nh * 0.6;
+        const off = (t * pxs) % (nh * 4);
+        for (let x = -H; x < W + H; x += nh * 4) {
+          g.beginPath();
+          g.moveTo(x + off, y1);
+          g.lineTo(x + off + (y1 - y2), y2);
+          g.stroke();
+        }
+        g.restore();
+        g.fillStyle = '#ffa53a';
+        g.fillRect(0, Y(n.t) - nh * 0.4, W, nh * 0.8);
+        g.fillStyle = '#ffffff';
+        g.font = `900 ${Math.round(nh * 1.7)}px sans-serif`;
+        g.fillText(`連打！ ${n.hits} / ${n.target}`, W / 2, Math.max(y2 + nh * 2, Math.min(y1 - nh * 2, (y1 + y2) / 2)));
+      }
+      // 長押しの胴体
+      for (const n of notes) {
+        if (n.t > horizon) break;
+        if (n.type !== 'hold' || (n.done && !n.holding)) continue;
+        const y1 = n.holding ? jy : Y(n.t);
+        const y2 = Math.max(-10, Y(n.end));
+        if (y1 <= y2) continue;
+        const bw = lw * 0.44;
+        const x = n.lane * lw + (lw - bw) / 2;
+        const col = n.result === 'miss' ? '#777777' : n.key ? '#ffcf3a' : LANE_COLORS[n.lane];
+        g.fillStyle = hexA(col, n.holding ? 0.75 : 0.45);
+        g.fillRect(x, y2, bw, y1 - y2);
+        g.fillStyle = hexA(col, 0.95);
+        g.fillRect(x - 3, y2 - 3, bw + 6, 6); // 終点
+      }
+      // 同時押しの線
+      const groups = {};
+      for (const n of notes) {
+        if (n.t > horizon) break;
+        if (n.chord === null || n.done || n.headDone) continue;
+        const gx = groups[n.chord] || (groups[n.chord] = { a: 9, b: -1, y: Y(n.t) });
+        gx.a = Math.min(gx.a, n.lane);
+        gx.b = Math.max(gx.b, n.lane);
+      }
+      g.fillStyle = 'rgba(255,255,255,0.75)';
+      for (const k in groups) {
+        const gx = groups[k];
+        if (gx.b > gx.a) g.fillRect(gx.a * lw + lw / 2, gx.y - 2, (gx.b - gx.a) * lw, 4);
+      }
+      // ノーツの頭
+      for (const n of notes) {
+        if (n.t > horizon) break;
+        if (n.type === 'roll' || n.done || n.headDone) continue;
+        const y = Y(n.t);
+        if (y < -nh * 3) continue;
+        const pad = lw * 0.07;
+        const x = n.lane * lw + pad;
+        const w = lw - pad * 2;
+        if (n.key) {
+          // キーノーツ：大きく金色、近づくと予告の光（6-2）
+          const h = nh * 1.6;
+          const lead = n.t - t;
+          if (lead < 1.6) {
+            g.fillStyle = `rgba(255,207,58,${0.18 + 0.14 * Math.sin(performance.now() / 90)})`;
+            rr(x - 6, y - h / 2 - 6, w + 12, h + 12, 10);
+            g.fill();
+          }
+          g.fillStyle = '#ffcf3a';
+          rr(x - 2, y - h / 2, w + 4, h, 6);
+          g.fill();
+          g.strokeStyle = '#ffffff';
+          g.lineWidth = 2;
+          g.stroke();
+          // 両端のひし形
+          g.fillStyle = '#ffffff';
+          for (const cx of [x + 2, x + w - 2]) {
+            g.beginPath();
+            g.moveTo(cx, y - h * 0.38);
+            g.lineTo(cx + h * 0.3, y);
+            g.lineTo(cx, y + h * 0.38);
+            g.lineTo(cx - h * 0.3, y);
+            g.closePath();
+            g.fill();
+          }
+        } else {
+          g.fillStyle = LANE_COLORS[n.lane];
+          rr(x, y - nh / 2, w, nh, 5);
+          g.fill();
+          g.fillStyle = 'rgba(255,255,255,0.85)';
+          g.fillRect(x + 4, y - nh / 2 + 2, w - 8, Math.max(2, nh * 0.2));
+        }
+        if (n.type === 'hold') {
+          // 長押しの頭：下向きの山印
+          g.fillStyle = 'rgba(10,8,28,0.8)';
+          g.beginPath();
+          g.moveTo(x + w / 2 - nh * 0.5, y - nh * 0.2);
+          g.lineTo(x + w / 2 + nh * 0.5, y - nh * 0.2);
+          g.lineTo(x + w / 2, y + nh * 0.35);
+          g.closePath();
+          g.fill();
+        }
+      }
+    }
+
+    function finish() {
+      if (ended) return;
+      ended = true;
+      GameLoop.stop();
+      if (audio) audio.stop();
+      const res = {
+        songId: song.id,
+        difficulty: diff,
+        level: chart.level,
+        auto,
+        preview: !!params.preview,
+        score: st.score,
+        maxCombo: st.maxCombo,
+        counts: Object.assign({}, st.counts),
+        gameOver: st.gameOver,
+        accuracy: Judge.accuracy(st),
+        total: chart.notes.length,
+        newBest: {},
+      };
+      if (!auto) {
+        // 自己ベスト（スコア・最大コンボ・パーフェクト数）を曲×難易度ごとに保存（7-3）
+        const b = (Save.data.bests[song.id] = Save.data.bests[song.id] || {});
+        const cur = b[diff] || { score: 0, maxCombo: 0, perfect: 0 };
+        res.newBest = { score: res.score > cur.score, maxCombo: res.maxCombo > cur.maxCombo, perfect: res.counts.perfect > cur.perfect };
+        res.prevBest = cur.score;
+        b[diff] = { score: Math.max(cur.score, res.score), maxCombo: Math.max(cur.maxCombo, res.maxCombo), perfect: Math.max(cur.perfect, res.counts.perfect) };
+        if (!song.proto) {
+          const T = Save.data.totals;
+          T.plays++;
+          T.perfect += res.counts.perfect;
+          T.great += res.counts.great;
+          T.miss += res.counts.miss;
+        }
+        Save.save();
+      }
+      Nav.go('result', res);
+    }
+
+    const def = {
+      head: false,
+      body: el('div', { class: 'play2' + (auto ? ' is-auto' : '') }, [
+        el('div', { class: 'hud-left' }, [judgeEl, comboEl]),
+        laneWrap,
+        el('div', { class: 'hud-right' }, [
+          el('div', { class: 'hud-info' }, [el('div', { class: 'hud-title', text: song.title }), el('div', { class: 'hud-diff', text: `${diffName}　Lv ${chart.level}${auto ? '　自動演奏' : ''}` })]),
+          el('div', { class: 'hud-score-wrap' }, [el('div', { class: 'hud-label', text: 'SCORE' }), scoreEl]),
+          meterEl,
+          skillEl,
+          quitBtn,
         ]),
-        el('div', { class: 'lanes' }, lanes),
         el('div', { class: 'touch-zones' }, zones),
       ]),
-      foot: button('終了 → リザルトへ（仮）', () => Nav.go('result'), { variant: 'sub' }),
       onEnter() {
         AE.init();
-        GameLoop.start((t) => {
-          if (start === null) start = t + COUNT_IN;
-          // クリック音を少し先まで予約（AE.now() が予約時刻になった瞬間に聞こえる）
-          if (AE.ready) {
-            const horizon = AE.scheduleTime() + 0.2;
-            while (start + scheduledBeat * SPB < horizon) {
-              const bt = start + scheduledBeat * SPB;
-              if (bt > AE.scheduleTime()) AE.click(bt, scheduledBeat % 4 === 0);
-              scheduledBeat++;
-            }
+        // 開発用：自動テストから判定の状態を見るため
+        NLM._play = { ses, st, chart, when: () => when };
+        ro = new ResizeObserver(() => {
+          resize();
+          draw(lastT);
+        });
+        ro.observe(laneWrap);
+        resize();
+        updateHud();
+        AE.renderSong(song, (p, label) => {
+          overlayText.textContent = `読み込み中… ${Math.round(p * 100)}%`;
+          overlayBar.style.width = p * 100 + '%';
+        })
+          .then((r) => {
+            if (ended || Nav.cur.def !== def) return;
+            when = AE.now() + 3.2; // 3秒のカウントダウン
+            audio = AE.playRendered(r, when, 0);
+            overlay.classList.add('count');
+          })
+          .catch((e) => {
+            overlayText.textContent = '読み込みに失敗しました：' + e.message;
+          });
+        GameLoop.start((now) => {
+          if (when === null) {
+            draw(-3);
+            return;
           }
-          const songT = t - start;
-          if (songT < 0) {
-            timeEl.textContent = String(Math.ceil(-songT));
-          } else {
-            timeEl.textContent = songT.toFixed(2) + ' 秒';
-            const b = Math.floor(songT / SPB);
-            if (b !== lastBeat) {
-              lastBeat = b;
-              beatEl.textContent = `${Math.floor(b / 4) + 1} 小節　${(b % 4) + 1} 拍目`;
-              lanes.forEach((l) => {
-                l.classList.remove('beat');
-                void l.offsetWidth;
-                l.classList.add('beat');
-              });
-            }
-          }
-          const ctx = AE.ctx;
-          infoEl.textContent = ctx
-            ? `音声：${ctx.state}　出力の遅れ：${Math.round((ctx.outputLatency || ctx.baseLatency || 0) * 1000)}ms`
-            : '音声：未起動';
+          const t = now - when;
+          lastT = t;
+          if (t < 0) overlayText.textContent = String(Math.ceil(-t));
+          else if (!overlay.hidden) overlay.hidden = true;
+          handleEvents(ses.update(t));
+          draw(t);
+          if (t > Math.min(chart.duration + 1, ses.lastTime() + 2.5)) finish();
         });
       },
       onLeave() {
+        ended = true;
         GameLoop.stop();
+        if (audio) audio.stop();
+        if (ro) ro.disconnect();
       },
       onKey(e) {
+        if (e.key === 'Escape') {
+          Nav.back();
+          return true;
+        }
         const lane = LANE_KEYS.indexOf(e.code);
         if (lane < 0) return false;
-        if (e.repeat) return true; // キーリピートは無視
-        press(lane, e.timeStamp);
+        if (!e.repeat) press(lane, e.timeStamp); // キーリピートは無視（4章）
         return true;
       },
       onKeyUp(e) {
         const lane = LANE_KEYS.indexOf(e.code);
-        if (lane >= 0) release(lane);
+        if (lane >= 0) release(lane, e.timeStamp);
       },
+    };
+    return def;
+  }
+
+  /* =========================================================
+   * リザルト（独奏）
+   * ========================================================= */
+  function ResultScreen(r) {
+    r = r || {};
+    const song = NLM.Songs.get(r.songId);
+    const mode = Session.mode;
+    const d = NLM.Songs.DIFFICULTIES.find((x) => x.id === r.difficulty) || { name: '' };
+    const c = r.counts || { perfect: 0, great: 0, miss: 0, auto: 0 };
+    const again = () => Nav.goWithStack([{ id: 'menu' }, { id: 'songSelect' }, { id: 'diffSelect' }], 'play', { songId: r.songId, difficulty: r.difficulty });
+    let foot;
+    if (r.preview) foot = [button('サウンドテストへ', () => Nav.goWithStack([{ id: 'menu' }, { id: 'settings' }], 'soundTest'), { variant: 'primary', className: 'btn-next' })];
+    else if (mode === 'coop')
+      foot = [button('次の曲へ（曲投票）', () => Nav.reset('songVote'), { variant: 'primary', className: 'btn-next' }), button('メニューへ', () => Nav.reset('menu'), { variant: 'sub' })];
+    else if (mode === 'battle') foot = [button('メニューへ', () => Nav.reset('menu'), { variant: 'primary', className: 'btn-next' })];
+    else
+      foot = [
+        button('もう一度', again, { variant: 'primary', className: 'btn-next' }),
+        button('曲選択へ', () => Nav.reset('songSelect'), { variant: 'sub' }),
+        button('メニューへ', () => Nav.reset('menu'), { variant: 'sub' }),
+      ];
+    const status = r.auto ? '自動演奏（記録なし）' : r.gameOver ? 'GAME OVER' : 'CLEAR';
+    const stat = (label, val, cls, isNew) => el('div', { class: 'res-stat ' + (cls || '') }, [el('span', { class: 'res-k', text: label }), el('span', { class: 'res-v', text: val }), isNew ? el('span', { class: 'res-new', text: 'NEW' }) : null]);
+    return {
+      title: 'リザルト',
+      crumb: crumb(modeCrumb(), song && song.title),
+      back: false,
+      body: el('div', { class: 'result' }, [
+        el('div', { class: 'res-song', text: `${song ? song.title : ''}　${d.name} Lv ${r.level || '-'}` }),
+        el('div', { class: 'res-status ' + (r.gameOver ? 'is-over' : 'is-clear'), text: status }),
+        el('div', { class: 'res-score' }, [el('span', { class: 'res-k', text: 'SCORE' }), el('span', { class: 'res-big', text: (r.score || 0).toLocaleString() }), r.newBest && r.newBest.score ? el('span', { class: 'res-new', text: '自己ベスト更新！' }) : null]),
+        el('div', { class: 'res-grid' }, [
+          stat('PERFECT', c.perfect, 'c-perfect', r.newBest && r.newBest.perfect),
+          stat('GREAT', c.great, 'c-great'),
+          stat('MISS', c.miss, 'c-miss'),
+          stat('AUTO', c.auto, 'c-auto'),
+          stat('最大コンボ', r.maxCombo || 0, '', r.newBest && r.newBest.maxCombo),
+          stat('達成率', ((r.accuracy || 0) * 100).toFixed(1) + '%'),
+        ]),
+      ]),
+      foot: el('div', { class: 'foot-row' }, foot),
+      onBack: () => Nav.reset('menu'),
     };
   }
 
