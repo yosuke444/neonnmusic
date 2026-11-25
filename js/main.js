@@ -689,7 +689,7 @@
         }, { variant: 'sub', className: 'btn-small' });
         panel.replaceChildren(grid, el('div', { class: 'st-panel-foot' }, [allOn, el('span', { class: 'st-hint', text: '押すと消音（暗くなる）。もう一度押すと戻る' })]));
       } else if (tab === 'check') {
-        const res = Music.check(compiled, rendered);
+        const res = Music.check(compiled, rendered).concat(Music.checkAgainst(song(), NLM.Songs.all()));
         const icon = { ok: '○', warn: '△', ng: '×' };
         panel.replaceChildren(
           el(

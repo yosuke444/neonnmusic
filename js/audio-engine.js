@@ -411,6 +411,22 @@
     return g;
   }
 
+  /** 歪み（波形をつぶす）の曲線 */
+  const driveCache = new WeakMap();
+  function drive(ctx, k) {
+    let m = driveCache.get(ctx);
+    if (!m) driveCache.set(ctx, (m = {}));
+    if (!m[k]) {
+      const c = new Float32Array(1024);
+      for (let i = 0; i < c.length; i++) {
+        const x = (i / 511.5) - 1;
+        c[i] = Math.tanh(x * k) / Math.tanh(k);
+      }
+      m[k] = c;
+    }
+    return m[k];
+  }
+
   /** 打楽器用：急に立ち上がって指数的に消える */
   function hitEnv(param, t, peak, decay) {
     param.setValueAtTime(peak, t);
@@ -456,8 +472,9 @@
       flt.frequency.setValueAtTime(inst.cutHi || 5000, t);
       flt.frequency.setTargetAtTime(inst.cutLo || 500, t, inst.fdecay || 0.06);
       const end = adsr(amp.gain, t, Math.min(dur, 0.05), 0.002, 0.25, 0, inst.release || 0.18, vel * 0.32);
-      osc(ctx, 'sawtooth', f, t, end, -6).connect(flt);
-      osc(ctx, 'square', f, t, end, 6).connect(flt);
+      // のこぎり波2本（矩形波を使わず、ピコピコした音にしない）
+      osc(ctx, 'sawtooth', f, t, end, -7).connect(flt);
+      osc(ctx, 'sawtooth', f, t, end, 7).connect(flt);
     },
     // パッド：ゆっくり立ち上がる柔らかい和音
     pad(ctx, out, t, dur, midi, vel, inst) {
@@ -572,6 +589,50 @@
       flt.connect(amp);
       osc(ctx, 'sine', f, t, end).connect(gainNode(ctx, 1.1)).connect(amp);
     },
+    // のこぎり波のベース（シンセウェイヴ・トランスなど）：フィルターの開閉＋サイン波の低音
+    sawbass(ctx, out, t, dur, midi, vel, inst) {
+      const f = hz(midi);
+      const amp = ctx.createGain();
+      amp.connect(out);
+      const cut = inst.cutoff || 900;
+      const flt = filter(ctx, 'lowpass', cut, inst.q || 4);
+      flt.frequency.setValueAtTime(cut * 3, t);
+      flt.frequency.setTargetAtTime(cut, t, 0.05);
+      const end = adsr(amp.gain, t, dur, 0.003, 0.15, 0.7, 0.05, vel * 0.36);
+      osc(ctx, 'sawtooth', f, t, end).connect(flt);
+      flt.connect(amp);
+      osc(ctx, 'sine', f, t, end).connect(gainNode(ctx, 0.8)).connect(amp);
+    },
+    // ワブルベース（ダブステップ）：フィルターを曲の拍に合わせて揺らす＋歪み
+    wobble(ctx, out, t, dur, midi, vel, inst, ev, song) {
+      const f = hz(midi);
+      const amp = ctx.createGain();
+      amp.connect(out);
+      const end = adsr(amp.gain, t, dur, 0.005, 0.1, 0.9, 0.05, vel * 0.3);
+      const flt = filter(ctx, 'lowpass', inst.cutoff || 300, 10);
+      const rate = ((song && song.bpm) || 140) / 60 * (inst.wob || 1); // 1拍に何回揺れるか
+      const lfo = osc(ctx, 'triangle', rate, t, end);
+      lfo.connect(gainNode(ctx, inst.depth || 1400)).connect(flt.frequency);
+      const sh = ctx.createWaveShaper();
+      sh.curve = drive(ctx, 3);
+      osc(ctx, 'sawtooth', f, t, end).connect(flt);
+      osc(ctx, 'square', f, t, end, -10).connect(gainNode(ctx, 0.6)).connect(flt);
+      flt.connect(sh).connect(gainNode(ctx, 0.5)).connect(amp);
+      osc(ctx, 'sine', f, t, end).connect(gainNode(ctx, 0.9)).connect(amp);
+    },
+    // 808ベース（トラップ）：音程が少し上から落ちる長いサイン波＋軽い歪み
+    b808(ctx, out, t, dur, midi, vel, inst) {
+      const f = hz(midi);
+      const amp = ctx.createGain();
+      amp.connect(out);
+      const end = adsr(amp.gain, t, dur, 0.004, 0.4, 0.8, 0.25, vel * 0.7);
+      const o = osc(ctx, 'sine', f * 1.5, t, end);
+      o.frequency.setValueAtTime(f * 1.5, t);
+      o.frequency.exponentialRampToValueAtTime(f, t + 0.05);
+      const sh = ctx.createWaveShaper();
+      sh.curve = drive(ctx, 1.6);
+      o.connect(sh).connect(amp);
+    },
     sub(ctx, out, t, dur, midi, vel) {
       const amp = ctx.createGain();
       amp.connect(out);
@@ -594,6 +655,22 @@
       ca.connect(out);
       hitEnv(ca.gain, t, vel * 0.25, 0.012);
       noise(ctx, t, t + 0.03).connect(filter(ctx, 'highpass', 2500)).connect(ca);
+    },
+    // ハードスタイルの歪んだキック
+    hardkick(ctx, out, t, dur, midi, vel, inst) {
+      const amp = ctx.createGain();
+      amp.connect(out);
+      const end = hitEnv(amp.gain, t, vel * 0.75, inst.decay || 0.5);
+      const o = osc(ctx, 'sine', 210, t, end);
+      o.frequency.setValueAtTime(210, t);
+      o.frequency.exponentialRampToValueAtTime(52, t + 0.12);
+      const sh = ctx.createWaveShaper();
+      sh.curve = drive(ctx, 6);
+      o.connect(sh).connect(filter(ctx, 'lowpass', 3500, 0.7)).connect(amp);
+      const ca = ctx.createGain();
+      ca.connect(out);
+      hitEnv(ca.gain, t, vel * 0.35, 0.015);
+      noise(ctx, t, t + 0.03).connect(filter(ctx, 'highpass', 2000)).connect(ca);
     },
     chipKick(ctx, out, t, dur, midi, vel) {
       const amp = ctx.createGain();
@@ -805,7 +882,7 @@
 
   /** フィルターの開閉とサイドチェインを予約する（fromBeat 以降） */
   function scheduleControl(g, c, timeOffset, fromBeat) {
-    const T = (b) => timeOffset + b * c.spb;
+    const T = (b) => Math.max(0, timeOffset + b * c.spb); // 計算誤差で負にならないように
     if (g.musicFilter) {
       const fp = g.musicFilter.frequency;
       let cur = 20000;
@@ -916,6 +993,7 @@
    * --------------------------------------------------------- */
   const NOTE_TAIL = {
     supersaw: 0.8, pluck: 0.8, pad: 2.4, bell: 3.6, pulse: 0.2, tri: 0.15, vox: 0.6, fhbass: 0.35, reese: 0.4, sub: 0.3,
+    sawbass: 0.3, wobble: 0.3, b808: 1.0, hardkick: 0.6,
     kick: 0.45, chipKick: 0.2, snare: 0.3, chipSnare: 0.2, clap: 0.3, hat: 0.4, chipHat: 0.1, crash: 2.8, shaker: 0.15, tom: 0.3,
   };
   const STEREO_PRESETS = { supersaw: 1, pad: 1 };

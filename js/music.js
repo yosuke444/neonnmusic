@@ -449,8 +449,10 @@
     add(d >= 90 && d <= 150 ? 'ok' : 'ng', '長さ', `${fmtTime(d)}（${c.totalBeats / bpb}小節）`);
 
     // 5) 構成：8小節単位、基本形
-    const odd = c.sections.filter((s) => s.bars % 8 !== 0);
-    add(odd.length ? 'warn' : 'ok', '構成', odd.length ? `8小節単位でない区間：${odd.map((s) => s.name).join('、')}` : 'すべて8小節単位');
+    // 遅い曲（中くらい・短い形）は4小節の区間を認める（docs/song-plan.md）
+    const shortOK = song.form === 'mid' || song.form === 'short';
+    const odd = c.sections.filter((s) => s.bars % 8 !== 0 && !(shortOK && s.bars % 4 === 0));
+    add(odd.length ? 'warn' : 'ok', '構成', odd.length ? `8小節単位でない区間：${odd.map((s) => s.name).join('、')}` : shortOK ? '8小節単位（遅い曲のため一部4小節）' : 'すべて8小節単位');
     const typeSeq = c.sections.map((s) => s.type).filter((t, i, a) => t !== a[i - 1]);
     const basic = ['intro', 'build', 'drop', 'break', 'build', 'drop', 'outro'];
     add(typeSeq.join() === basic.join() ? 'ok' : 'warn', '構成', `流れ：${typeSeq.map((t) => TYPE_JA[t] || t).join('→')}`);
@@ -520,7 +522,50 @@
     };
   }
 
+  /**
+   * 曲どうしの重複チェック（10-6：コード進行・主旋律の動機・BPM・キーの組み合わせ）
+   * 試作曲は数えない。結果は check() と同じ形
+   */
+  function checkAgainst(song, others) {
+    const res = [];
+    const add = (level, item, msg) => res.push({ level, item, msg });
+    const sig = (s) => {
+      const drop = s.sections.find((x) => x.type === 'drop') || {};
+      const prog = (drop.prog || s.prog).join(',');
+      const leadSeq = drop.parts && drop.parts[s.leadPart || 'lead'];
+      const first = Array.isArray(leadSeq) ? leadSeq[0] : leadSeq;
+      const hook = first && s.patterns[first] ? String(s.patterns[first].s || s.patterns[first]) : '';
+      // 主旋律の動機は音の高さを除いた「動き」で比べる（移調しても同じなら重複）
+      const toks = hook.split(/\s+/).filter((t) => t !== '|');
+      const mids = toks.map((t) => noteToMidi(t.replace('!', '')));
+      const first0 = mids.find((m) => m !== null);
+      const shape = toks.map((t, i) => (mids[i] !== null ? String(mids[i] - first0) : t)).join(' ');
+      return { key: s.key + s.mode, prog, bpm: s.bpm, shape };
+    };
+    const me = sig(song);
+    let dup = 0;
+    for (const o of others) {
+      if (o === song || o.proto) continue;
+      const x = sig(o);
+      if (x.key === me.key && x.prog === me.prog) {
+        dup++;
+        add('warn', '重複', `「${o.title}」とキーとコード進行が同じ`);
+      }
+      if (x.bpm === me.bpm && x.key === me.key) {
+        dup++;
+        add('warn', '重複', `「${o.title}」とBPMとキーが同じ`);
+      }
+      if (x.shape && x.shape === me.shape) {
+        dup++;
+        add('warn', '重複', `「${o.title}」と主旋律の動機が同じ`);
+      }
+    }
+    if (!dup) add('ok', '重複', 'ほかの曲とコード進行・動機・BPM・キーの組み合わせが重ならない');
+    return res;
+  }
+
   NLM.Music = {
+    checkAgainst,
     noteToMidi,
     midiToName,
     midiToFreq,
