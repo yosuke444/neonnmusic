@@ -271,7 +271,8 @@
 
   /** 難易度の数字（1〜15）：密度・瞬間の最大密度・同時押し・長押しから計算（9-2） */
   // 難易度ごとの「複雑さの値」の想定幅 → 数字の範囲に写す
-  const RAW_SPAN = { easy: [2, 5], normal: [5.5, 10], hard: [9, 15], extra: [13, 21] };
+  // 1〜20曲目の実際の値で合わせた（上側は今後の速い曲のための余裕）
+  const RAW_SPAN = { easy: [1.5, 4], normal: [3.9, 8], hard: [5.8, 14], extra: [7.3, 20] };
   function levelOf(s, difficulty) {
     const raw = s.nps * 0.95 + s.peak * 0.45 + s.chordRatio * 4 + s.holdRatio * 2 + (s.bpm >= 160 ? 0.4 : 0);
     const [a, b] = RAW_SPAN[difficulty];

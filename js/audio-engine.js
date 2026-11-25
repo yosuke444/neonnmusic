@@ -633,6 +633,20 @@
       sh.curve = drive(ctx, 1.6);
       o.connect(sh).connect(amp);
     },
+    // アシッド（サイトランスなど）：のこぎり波＋強い共鳴のフィルターが一音ごとに閉じる
+    acid(ctx, out, t, dur, midi, vel, inst) {
+      const f = hz(midi);
+      const amp = ctx.createGain();
+      amp.connect(out);
+      const flt = filter(ctx, 'lowpass', inst.cutHi || 2800, inst.q || 14);
+      flt.frequency.setValueAtTime((inst.cutHi || 2800) * (vel > 0.9 ? 1.6 : 1), t);
+      flt.frequency.setTargetAtTime(inst.cutLo || 350, t, inst.fdecay || 0.09);
+      const end = adsr(amp.gain, t, dur, 0.003, 0.12, 0.6, 0.04, vel * 0.3);
+      const sh = ctx.createWaveShaper();
+      sh.curve = drive(ctx, 2);
+      osc(ctx, 'sawtooth', f, t, end).connect(flt);
+      flt.connect(sh).connect(amp);
+    },
     sub(ctx, out, t, dur, midi, vel) {
       const amp = ctx.createGain();
       amp.connect(out);
@@ -993,7 +1007,7 @@
    * --------------------------------------------------------- */
   const NOTE_TAIL = {
     supersaw: 0.8, pluck: 0.8, pad: 2.4, bell: 3.6, pulse: 0.2, tri: 0.15, vox: 0.6, fhbass: 0.35, reese: 0.4, sub: 0.3,
-    sawbass: 0.3, wobble: 0.3, b808: 1.0, hardkick: 0.6,
+    sawbass: 0.3, wobble: 0.3, b808: 1.0, hardkick: 0.6, acid: 0.2,
     kick: 0.45, chipKick: 0.2, snare: 0.3, chipSnare: 0.2, clap: 0.3, hat: 0.4, chipHat: 0.1, crash: 2.8, shaker: 0.15, tom: 0.3,
   };
   const STEREO_PRESETS = { supersaw: 1, pad: 1 };

@@ -406,7 +406,10 @@
     // 1) 不協和：強拍（1拍目・3拍目）で0.5拍より長く鳴るコード外の音
     let diss = 0;
     const melodic = c.events.filter((e) => e.midi !== undefined && (c.parts[e.part].type === 'melody' || c.parts[e.part].type === 'bass'));
-    for (let b = 0; b < c.totalBeats; b += bpb / 2) {
+    // 強拍：ふつうは1拍目と3拍目。変拍子の曲は song.strong で小節内の位置（拍）を指定
+    const strongAt = [];
+    for (let bar0 = 0; bar0 < c.totalBeats - 1e-6; bar0 += bpb) for (const o of song.strong || [0, bpb / 2]) strongAt.push(bar0 + o);
+    for (const b of strongAt) {
       const ch = chordAt(b);
       for (const e of melodic) {
         if (e.beat <= b + 1e-6 && e.beat + e.dur - b > 0.5 + 1e-6) {
