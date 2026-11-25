@@ -1621,7 +1621,7 @@
       }
       for (const n of notes) {
         if (n.t > horizon) break;
-        if (n.type !== 'hold' || (n.done && !n.holding)) continue;
+        if (n.type !== 'hold' || (n.done && !n.holding && n.result !== 'miss') || (n.tailNote && n.tailNote.done)) continue;
         const y1 = n.holding ? jy : Y(n.t);
         const y2 = Math.max(-10, Y(n.end));
         if (y1 <= y2) continue;
@@ -1657,6 +1657,29 @@
         const pad = lw * 0.07;
         const x = n.lane * lw + pad + X(n);
         const w = lw - pad * 2;
+        if (n.type === 'release') {
+          // 長押しの終点（離すノーツ）：中が抜けた枠＋上向きの矢印。始点をミスした時は灰色
+          const head = n.headNote;
+          const dead = head && (head.result === 'miss' || head.broken);
+          const col = dead ? '#777777' : head && head.key ? '#ffcf3a' : LANE_COLORS[n.lane];
+          g.fillStyle = 'rgba(10,8,28,0.85)';
+          rr(x, y - nh / 2, w, nh, 5);
+          g.fill();
+          g.strokeStyle = col;
+          g.lineWidth = Math.max(3, nh * 0.22);
+          g.stroke();
+          g.strokeStyle = dead ? '#999999' : '#ffffff';
+          g.lineWidth = Math.max(2, nh * 0.16);
+          for (const cx of [x + w * 0.3, x + w * 0.7]) {
+            g.beginPath();
+            g.moveTo(cx - nh * 0.42, y + nh * 0.2);
+            g.lineTo(cx, y - nh * 0.22);
+            g.lineTo(cx + nh * 0.42, y + nh * 0.2);
+            g.stroke();
+          }
+          g.globalAlpha = 1;
+          continue;
+        }
         if (n.key) {
           const h = nh * 1.6;
           if (n.t - t < 1.6) {

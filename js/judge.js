@@ -159,21 +159,31 @@
   /* =========================================================
    * 自分の演奏の判定（譜面＋入力）
    * opts.auto: true → すべて自動演奏（譜面確認画面）
+   * 長押し：始点は押した時、終点（type:'release' のノーツ）は離した時に判定する。
+   *   終点の判定の幅は通常と同じ。早く離しすぎ・離さずに押し続け・始点のミスは、終点もミス。
    * 戻り値の各関数は「出来事」の配列を返す：
-   *   { type:'judge', note, result, lane } / { type:'skill' } / { type:'holdBreak', note }
-   *   { type:'rollHit', note } / { type:'holdEnd', note }
+   *   { type:'judge', note, result, lane } / { type:'skill' } / { type:'holdBreak', note } / { type:'rollHit', note }
    * ========================================================= */
   J.createSession = function (chart, st, opts) {
     opts = opts || {};
     const notes = chart.notes.map((n) => Object.assign({}, n, { done: false, result: null, holding: false, hits: 0 }));
-    const byLane = [[], [], [], []];
+    notes.forEach((n) => {
+      if (n.type === 'hold' && n.tail !== undefined) {
+        n.tailNote = notes[n.tail];
+        notes[n.tail].headNote = n;
+      }
+    });
+    const byLane = [[], [], [], []]; // 押して判定するノーツ（通常・長押しの始点）
     const rolls = [];
+    const releases = [];
     for (const n of notes) {
       if (n.type === 'roll') rolls.push(n);
+      else if (n.type === 'release') releases.push(n);
       else byLane[n.lane].push(n);
     }
     const ptr = [0, 0, 0, 0];
     let rollPtr = 0;
+    let relPtr = 0;
     const holding = [null, null, null, null];
     const W = J.WINDOW.great;
 
@@ -185,7 +195,7 @@
       if (r.skill) ev.push({ type: 'skill' });
     }
 
-    function useAuto(n) {
+    function useAuto() {
       if (opts.auto) return true;
       if (st.autoLeft > 0) {
         st.autoLeft--;
@@ -222,27 +232,28 @@
         if (n.type === 'hold') {
           n.holding = true;
           holding[lane] = n;
-          n.done = false; // 終点まで続く
-          n.headDone = true;
         }
         return ev;
       },
 
-      /** 離した */
+      /** 離した：長押しの終点の判定 */
       release(lane, t) {
         const ev = [];
         const n = holding[lane];
         if (!n) return ev;
         holding[lane] = null;
         n.holding = false;
-        n.done = true;
-        if (t < n.end - J.HOLD_RELEASE_GRACE) {
-          // 途中で離した → ミス扱い
+        const tail = n.tailNote;
+        if (!tail || tail.done) return ev;
+        const dt = t - tail.t;
+        const res = J.windowResult(dt);
+        if (res) finish(tail, res, ev, t);
+        else {
+          // 早く離しすぎた
+          finish(tail, 'miss', ev, t);
           n.broken = true;
-          const r = J.revise(st, n, n.result, t);
-          n.result = 'miss';
-          ev.push({ type: 'holdBreak', note: n, lane, shielded: r.shielded });
-        } else ev.push({ type: 'holdEnd', note: n, lane });
+          ev.push({ type: 'holdBreak', note: n, lane });
+        }
         return ev;
       },
 
@@ -256,35 +267,41 @@
           ptr[lane] = i;
           for (let k = i; k < list.length; k++) {
             const n = list[k];
-            if (n.done || n.headDone) continue;
+            if (n.done) continue;
             if (n.t > t + 0.001) break;
-            if (n.auto || useAuto(n)) {
+            if (n.auto || useAuto()) {
               n.auto = true;
               if (t >= n.t) {
                 finish(n, 'auto', ev, t);
                 if (n.type === 'hold') {
-                  n.done = false;
-                  n.headDone = true;
                   n.holding = true;
                   n.autoHold = true;
                 }
               }
               continue;
             }
-            if (t > n.t + W) {
-              finish(n, 'miss', ev, t);
-              if (n.type === 'hold') n.headDone = true;
-            }
+            if (t > n.t + W) finish(n, 'miss', ev, t);
           }
-          // 長押しの終点
-          for (const n of list) {
-            if (n.headDone && !n.done && n.holding && t >= n.end) {
-              n.done = true;
-              n.holding = false;
-              if (holding[lane] === n) holding[lane] = null;
-              ev.push({ type: 'holdEnd', note: n, lane });
+        }
+        // 長押しの終点
+        while (relPtr < releases.length && releases[relPtr].done) relPtr++;
+        for (let k = relPtr; k < releases.length; k++) {
+          const tail = releases[k];
+          if (tail.done) continue;
+          if (tail.t > t + 0.001) break;
+          const head = tail.headNote;
+          if (head && head.autoHold) {
+            finish(tail, 'auto', ev, t);
+            head.holding = false;
+            continue;
+          }
+          if (t > tail.t + W) {
+            // 離さずに押し続けた、または始点をミスした
+            finish(tail, 'miss', ev, t);
+            if (head) {
+              if (holding[head.lane] === head) holding[head.lane] = null;
+              head.holding = false;
             }
-            if (n.headDone && !n.done && !n.holding && n.result === 'miss') n.done = true;
           }
         }
         // 連打
