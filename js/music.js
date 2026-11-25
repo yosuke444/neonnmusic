@@ -447,6 +447,18 @@
       add('warn', '音量', '書き出すと音割れの確認ができます');
     }
 
+    // パターンの長さ：小節の長さの倍数でないと、くり返すうちにリズムがずれる
+    const badPat = [];
+    for (const [name, p] of Object.entries(song.patterns)) {
+      const pp = parsePattern(p, name);
+      const perBar = bpb * pp.div;
+      if (Math.abs(pp.tokens.length / perBar - Math.round(pp.tokens.length / perBar)) > 1e-6 && pp.tokens.length % perBar !== 0) {
+        // 小節より短いくり返し（アルペジオの 0 1 2 3 など）は、小節の長さを割り切れればよい
+        if (perBar % pp.tokens.length !== 0) badPat.push(`${name}（${pp.tokens.length}マス）`);
+      }
+    }
+    add(badPat.length ? 'ng' : 'ok', 'パターン', badPat.length ? `小節の長さ（${bpb * 4}マス）と合わない：${badPat.join('、')}` : 'すべて小節の長さに合っている');
+
     // 4) 長さ（1分30秒〜2分30秒）
     const d = c.duration;
     add(d >= 90 && d <= 150 ? 'ok' : 'ng', '長さ', `${fmtTime(d)}（${c.totalBeats / bpb}小節）`);
