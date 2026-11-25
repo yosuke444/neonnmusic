@@ -2284,4 +2284,5 @@
   NLM.Nav = Nav;
   NLM.Session = Session;
   NLM.GameLoop = GameLoop;
+  NLM._showUnlocks = showUnlocks; // 開発用：解禁の演出の確認
 })();
