@@ -543,7 +543,7 @@
       const mids = toks.map((t) => noteToMidi(t.replace('!', '')));
       const first0 = mids.find((m) => m !== null);
       const shape = toks.map((t, i) => (mids[i] !== null ? String(mids[i] - first0) : t)).join(' ');
-      return { key: s.key + s.mode, prog, bpm: s.bpm, shape };
+      return { key: pcOfName(s.key) + s.mode, prog, bpm: s.bpm, shape }; // キーは音の高さで比べる（G# と A♭ は同じ）
     };
     const me = sig(song);
     let dup = 0;
