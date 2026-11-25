@@ -138,6 +138,14 @@
   document.addEventListener('keydown', (e) => {
     const cur = Nav.cur;
     if (!cur) return;
+    // 解禁の演出などの重なった画面：Escで閉じる。ほかのキーは画面の切り替えに使わない
+    if (UI.modalClose) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        UI.modalClose();
+      }
+      return;
+    }
     if (cur.def.onKey && cur.def.onKey(e) === true) {
       e.preventDefault();
       return;
@@ -383,17 +391,11 @@
       return CharScreen(true);
     },
 
-    /* ---------- 曲一覧 ---------- */
+    /* ---------- 曲一覧（9章） ---------- */
     songList() {
-      return {
-        title: '曲一覧',
-        body: placeholder([
-          `全${NLM.Songs.TOTAL}曲（最初は${NLM.Songs.INITIAL_UNLOCKED}曲が解禁済み）`,
-          '解禁状況・難易度ごとの数字・自己ベスト・解禁条件と進み具合',
-          '（仮表示）フェーズ6・7で実装',
-        ]),
-      };
+      return SongListScreen();
     },
+
 
     /* ---------- 設定（12章） ---------- */
     settings() {
@@ -944,6 +946,25 @@
    * キャラ選択・キャラ一覧（8章）
    * listMode=true：メニューの「キャラ一覧」（選ぶボタンなし）
    * ========================================================= */
+  /** 未解禁の絵を影絵にする（描いた形の上だけを塗る） */
+  function silhouette(g, w, h) {
+    g.save();
+    g.globalCompositeOperation = 'source-atop';
+    g.fillStyle = '#1c1440';
+    g.fillRect(0, 0, w, h);
+    g.restore();
+  }
+
+  /** 解禁条件と進み具合の行（9-2：例「パーフェクト 640 / 1000」） */
+  function progressLine(u, locked) {
+    if (!locked) return el('div', { class: 'char-line dim' }, [el('b', { text: '解禁　' }), u ? '解禁済み' : '最初から使える']);
+    const pr = NLM.Unlock.progress(u);
+    return el('div', { class: 'unlock-prog' }, [
+      el('div', { class: 'char-line' }, [el('b', { text: '解禁条件　' }), pr.text]),
+      el('div', { class: 'prog-row' }, [el('div', { class: 'prog-bar' }, [el('div', { class: 'prog-fill', style: { width: Math.round(pr.ratio * 100) + '%' } })]), el('span', { class: 'prog-label', text: pr.label })]),
+    ]);
+  }
+
   function CharScreen(listMode) {
     const Chars = NLM.Characters;
     const unlocked = new Set(Save.data.unlocked.characters);
@@ -958,7 +979,7 @@
     const cells = Chars.list.map((c) => {
       const locked = !unlocked.has(c.id);
       const b = button('', () => pick(c), { className: 'btn-char' + (locked ? ' is-locked' : ''), color: c.color, id: 'char-' + c.id });
-      b.replaceChildren(el('img', { src: Chars.iconURL(c, 56), alt: '' }), el('span', { class: 'char-name', text: locked && !listMode ? '？？？' : c.name }));
+      b.replaceChildren(el('img', { src: Chars.iconURL(c, 56), alt: '' }), el('span', { class: 'char-name', text: c.name }));
       b.addEventListener('focus', () => pick(c));
       return b;
     });
@@ -973,6 +994,7 @@
         g.clearRect(0, 0, cv.width, cv.height);
         const sz = Math.min(cv.width, cv.height);
         Chars.draw(g, sel, cv.width / 2, cv.height / 2, sz * 0.9, ex);
+        if (!unlocked.has(sel.id)) silhouette(g, cv.width, cv.height);
       });
     }
     function pick(c) {
@@ -987,7 +1009,7 @@
         el('div', { class: 'char-line' }, [el('b', { text: '特性　' }), c.trait.text]),
         el('div', { class: 'char-line' }, [el('b', { text: 'スキル　' }), `${sk.name}：${sk.text}`]),
         el('div', { class: 'char-line dim' }, [`メーター満タン ${sk.meter}　対象：${NLM.Characters.TARGET_JA[sk.target]}`, el('span', { class: 'char-coop', text: coopNote })]),
-        el('div', { class: 'char-line dim' }, [el('b', { text: '解禁　' }), c.unlockText])
+        progressLine(c.unlock, locked)
       );
       okBtn.disabled = locked;
       if (Nav.cur && Nav.cur.def === def) paintSmall();
@@ -1017,6 +1039,7 @@
           const sz = Math.min(big.width, big.height);
           // 待機の表情（線が少しずつ揺れる）
           Chars.draw(g, sel, big.width / 2, big.height / 2 + Math.sin(performance.now() / 400) * sz * 0.02, sz * 0.86, 'idle', { boil: true });
+          if (!unlocked.has(sel.id)) silhouette(g, big.width, big.height); // 未解禁：影絵
         });
       },
       onLeave() {
@@ -1924,9 +1947,165 @@
         T.clears++;
         if (match.difficulty === 'hard' || match.difficulty === 'extra') T.hardClears++;
         if (match.difficulty === 'extra') T.extraClears++;
+        // 「独奏で特定の曲をクリア」の解禁条件用
+        const P = Save.data.progress;
+        P.songClears = P.songClears || {};
+        P.songClears[match.songs[0]] = (P.songClears[match.songs[0]] || 0) + 1;
       }
     }
     Save.save();
+    // 解禁の判定（9章）：新しく解禁したものは結果画面で演出する
+    const fresh = NLM.Unlock.check();
+    if (fresh.length) Session.unlockQueue = (Session.unlockQueue || []).concat(fresh);
+  }
+
+  /* =========================================================
+   * 曲一覧（9章）：解禁状況・難易度ごとの数字・自己ベスト・解禁条件と進み具合
+   * ========================================================= */
+  function SongListScreen() {
+    const songs = NLM.Songs.all()
+      .filter((s) => !s.proto)
+      .sort((a, b) => a.no - b.no);
+    const unlocked = new Set(Save.data.unlocked.songs);
+    const PER = 10;
+    let page = 0;
+    const list = el('div', { class: 'slist' });
+    const detail = el('div', { class: 'char-detail song-detail' });
+    const pageEl = el('div', { class: 'page-info' });
+    const prevB = button('◀', () => {
+      page--;
+      drawList(true);
+    }, { className: 'btn-arrow' });
+    const nextB = button('▶', () => {
+      page++;
+      drawList(true);
+    }, { className: 'btn-arrow' });
+    const pages = Math.max(1, Math.ceil(songs.length / PER));
+    function drawList(focus) {
+      page = (page + pages) % pages;
+      const rows = songs.slice(page * PER, page * PER + PER).map((s, i) => {
+        const locked = !unlocked.has(s.id);
+        const b = button(`${s.no}. ${s.title}`, () => pick(s), {
+          className: 'btn-srow' + (locked ? ' is-locked' : ''),
+          sub: locked ? '🔒 未解禁　' + s.genre : s.genre,
+          color: LANE_COLORS[(page * PER + i) % 4],
+          id: 'song-' + s.id,
+        });
+        b.addEventListener('focus', () => pick(s));
+        return b;
+      });
+      list.replaceChildren(...rows);
+      pageEl.textContent = `${page + 1} / ${pages}`;
+      if (focus && rows[0]) rows[0].focus();
+      pick(songs[page * PER]);
+    }
+    function pick(s) {
+      const locked = !unlocked.has(s.id);
+      list.querySelectorAll('.btn-srow').forEach((b) => b.classList.toggle('is-sel', b.dataset.id === 'song-' + s.id));
+      const lv = NLM.Songs.DIFFICULTIES.map((d, i) => {
+        const ch = NLM.Chart.generate(s, d.id);
+        const b = bestOf(s.id, d.id);
+        return el('div', { class: 'lv-box', style: { '--c': DIFF_COLORS[i] } }, [
+          el('div', { class: 'lv-name', text: d.name }),
+          el('div', { class: 'lv-num', text: ch.level }),
+          el('div', { class: 'lv-best', text: b ? `ベスト ${b.score.toLocaleString()}` : 'ベスト －' }),
+          el('div', { class: 'lv-sub', text: b ? `最大コンボ ${b.maxCombo}　P ${b.perfect}` : `ノーツ ${ch.stats.count}` }),
+        ]);
+      });
+      const key = `${s.key.replace('b', '♭')} ${s.mode === 'minor' ? 'マイナー' : 'メジャー'}`;
+      detail.replaceChildren(
+        el('div', { class: 'char-title' }, [el('span', { class: 'char-no', text: 'No.' + s.no }), el('span', { text: s.title }), locked ? el('span', { class: 'char-lock', text: '未解禁' }) : null]),
+        el('div', { class: 'char-motif', text: `${s.genre}　BPM ${s.bpm}　${key}` }),
+        el('div', { class: 'lv-grid' }, lv),
+        progressLine(s.unlock, locked)
+      );
+    }
+    drawList(false);
+    return {
+      title: '曲一覧',
+      body: el('div', { class: 'char-layout song-layout' }, [
+        el('div', { class: 'slist-wrap' }, [el('div', { class: 'song-page' }, [prevB, list, nextB]), pageEl]),
+        detail,
+      ]),
+    };
+  }
+
+  /* =========================================================
+   * 解禁の演出（9-2）：画面中央に大きく。キャラは発動ポーズ、曲はサビ（ドロップ）の一部を流す
+   * ========================================================= */
+  function showUnlocks(queue, done) {
+    if (!queue || !queue.length) {
+      done && done();
+      return;
+    }
+    const item = queue.shift();
+    const isChar = item.kind === 'char';
+    const it = item.item;
+    let raf = 0;
+    let live = null;
+    let liveTimer = null;
+    let closed = false;
+    const cv = el('canvas', { class: 'unlock-cv' });
+    const okBtn = button('OK', () => close(), { variant: 'primary', className: 'btn-next', id: 'unlock-ok' });
+    const card = el('div', { class: 'unlock-card', style: { '--c': isChar ? it.color : LANE_COLORS[it.no % 4] } }, [
+      el('div', { class: 'unlock-kind', text: isChar ? 'NEW CHARACTER' : 'NEW SONG' }),
+      el('div', { class: 'unlock-title neon-title', text: '解禁！' }),
+      isChar ? cv : el('div', { class: 'unlock-eq' }, [0, 1, 2, 3, 4, 5, 6].map((i) => el('span', { style: { '--i': i } }))),
+      el('div', { class: 'unlock-name', text: it.title || it.name }),
+      el('div', {
+        class: 'unlock-desc',
+        text: isChar ? `スキル「${it.skill.name}」：${it.skill.text}` : `${it.genre}　BPM ${it.bpm}　独奏・演争・協奏で遊べます`,
+      }),
+      okBtn,
+    ]);
+    const ov = el('div', { class: 'unlock-ov' }, [card]);
+    document.body.append(ov);
+    okBtn.focus();
+    UI.modalClose = close;
+    // 演出：花火・街の一斉点灯・効果音
+    const FX = NLM.FX;
+    FX.City.litUntil = performance.now() + 1200;
+    AE.sfx('win');
+    const col = isChar ? it.color : '#ffe94a';
+    for (let k = 0; k < 5; k++) setTimeout(() => !closed && FX.firework(innerWidth * (0.15 + Math.random() * 0.7), innerHeight * (0.15 + Math.random() * 0.3), k % 2 ? col : '#ffffff'), k * 260);
+    if (isChar) {
+      const loop = () => {
+        const r = cv.getBoundingClientRect();
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        if (cv.width !== Math.round(r.width * dpr)) {
+          cv.width = Math.round(r.width * dpr);
+          cv.height = Math.round(r.height * dpr);
+        }
+        const g = cv.getContext('2d');
+        g.clearRect(0, 0, cv.width, cv.height);
+        const sz = Math.min(cv.width, cv.height);
+        NLM.Characters.draw(g, it, cv.width / 2, cv.height / 2 + Math.sin(performance.now() / 220) * sz * 0.03, sz * 0.86, 'skill', { boil: true });
+        raf = requestAnimationFrame(loop);
+      };
+      raf = requestAnimationFrame(loop);
+    } else {
+      // 曲：ドロップの頭から約10秒
+      const c = NLM.Music.compile(it);
+      const drop = c.sections.find((x) => x.type === 'drop');
+      AE.init();
+      AE.startLive(it, { startBeat: drop ? drop.startBeat : 0 }).then((h) => {
+        if (closed) h.stop();
+        else {
+          live = h;
+          liveTimer = setTimeout(() => live && live.stop(), 10000);
+        }
+      });
+    }
+    function close() {
+      if (closed) return;
+      closed = true;
+      cancelAnimationFrame(raf);
+      clearTimeout(liveTimer);
+      if (live) live.stop();
+      ov.remove();
+      UI.modalClose = null;
+      showUnlocks(queue, done);
+    }
   }
 
   /* =========================================================
@@ -2046,6 +2225,14 @@
       onBack: () => Nav.reset('menu'),
       onEnter() {
         const FX = NLM.FX;
+        // 新しく解禁したものがあれば、勝利の演出のあとに順番に見せる
+        setTimeout(() => {
+          if (Nav.cur && Nav.cur.id === 'result' && Session.unlockQueue && Session.unlockQueue.length) {
+            const q = Session.unlockQueue;
+            Session.unlockQueue = [];
+            showUnlocks(q, () => UI.focusFirst(app));
+          }
+        }, 1600);
         const celebrate = mode === 'battle' || (!st.gameOver && !match.auto);
         if (celebrate) {
           // 勝利：街中のネオンが点灯＋花火
