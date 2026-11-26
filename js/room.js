@@ -229,9 +229,9 @@
       let cands;
       let pick;
       if (S.mode === 'battle') {
-        // 演争：ホストの解禁済みの曲から「曲数×2」をランダムに候補に
+        // 演争：ホストの解禁済みの曲からランダムに候補を出す（監督の決定：3曲→5曲、5曲→10曲、10曲→15曲）
         pick = Math.min(S.settings.songs, all.length);
-        cands = shuffle(all).slice(0, Math.min(all.length, pick * 2));
+        cands = shuffle(all).slice(0, Math.min(all.length, candidateCount(pick)));
       } else {
         // 協奏：ホストの解禁済みの全曲から1曲
         pick = 1;
@@ -302,6 +302,13 @@
     },
   };
 
+  /** 投票の候補の数：3曲以下＝曲数＋2、4〜5曲＝曲数×2、6〜10曲＝曲数＋5（3→5、5→10、10→15） */
+  function candidateCount(n) {
+    if (n <= 3) return n + 2;
+    if (n <= 5) return n * 2;
+    return n + 5;
+  }
+
   /** 名前：最大8文字。空なら「P番号」 */
   function cleanName(n, num) {
     const s = String(n || '')
@@ -327,5 +334,6 @@
   }
 
   Room.cleanName = cleanName;
+  Room.candidateCount = candidateCount;
   NLM.Room = Room;
 })();
