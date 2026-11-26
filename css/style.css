@@ -2673,3 +2673,55 @@ body {
 .perf-hud.is-slow {
   color: var(--neon-red);
 }
+
+/* 未解禁の曲：キャラと同じく暗くしてロック（押すと解禁条件） */
+.btn-song,
+.btn-srow {
+  position: relative;
+}
+.btn-song.is-locked,
+.btn-srow.is-locked {
+  --c: #5a5470 !important;
+  opacity: 1;
+  background: rgba(6, 5, 14, 0.85);
+  box-shadow: none;
+}
+.btn-song.is-locked .btn-label,
+.btn-srow.is-locked .btn-label {
+  color: #6f6889;
+  text-shadow: none;
+}
+.btn-song.is-locked .btn-note,
+.btn-srow.is-locked .btn-note {
+  color: #5a5470;
+}
+.btn-srow.is-locked.is-sel {
+  background: rgba(30, 26, 50, 0.9);
+  box-shadow: 0 0 0 2px #8a82a8;
+}
+.song-lock {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1.3em;
+  filter: grayscale(0.3);
+  pointer-events: none;
+}
+.btn-srow .song-lock {
+  font-size: 1em;
+  right: 6px;
+}
+.lock-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+.btn-song.is-locked {
+  padding-right: 2.4em;
+  padding-left: 2.4em;
+}
+.btn-srow.is-locked {
+  padding-right: 2em;
+}

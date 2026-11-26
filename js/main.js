@@ -756,8 +756,31 @@
   }
   const LANE_COLORS = ['#ff3ea5', '#2de2e6', '#ffe94a', '#b26bff'];
 
+  /** 曲選択に並べる曲：本編の全曲（未解禁も暗く表示する）。本編の曲がなければ試作曲 */
+  function listedSongs() {
+    const real = NLM.Songs.all()
+      .filter((s) => !s.proto)
+      .sort((a, b) => a.no - b.no);
+    return real.length ? real : NLM.Songs.all().filter((s) => s.proto);
+  }
+  const isSongLocked = (s) => !s.proto && !Save.data.unlocked.songs.includes(s.id);
+  /** 曲のボタン。未解禁はキャラと同じく暗くしてロックを付け、押すと解禁条件を見せる */
+  function songButton(s, i, sub, onPick) {
+    const locked = isSongLocked(s);
+    const b = button(s.title, () => (locked ? showSongLock(s) : onPick()), {
+      className: 'btn-song' + (locked ? ' is-locked' : ''),
+      sub: locked ? `未解禁　${s.genre}` : sub,
+      color: LANE_COLORS[i % 4],
+    });
+    if (locked) b.append(el('span', { class: 'song-lock', text: '🔒' }));
+    return b;
+  }
+  function showSongLock(s) {
+    showDialog(`🔒 ${s.title}`, el('div', { class: 'lock-body' }, [el('div', { class: 'char-motif', text: `${s.genre}　BPM ${s.bpm}` }), progressLine(s.unlock, true)]), [['閉じる', null, true]]);
+  }
+
   function SongSelectScreen() {
-    const songs = playableSongs();
+    const songs = listedSongs();
     const PER = 6;
     let page = Math.floor(Math.max(0, songs.findIndex((s) => s.id === Session.songId)) / PER);
     const grid = el('div', { class: 'song-grid' });
@@ -778,10 +801,10 @@
           const bests = NLM.Songs.DIFFICULTIES.map((d) => bestOf(s.id, d.id)).filter(Boolean);
           const top = bests.length ? Math.max(...bests.map((b) => b.score)) : null;
           const sub = `${s.genre}　BPM ${s.bpm}${top !== null ? '　ベスト ' + top.toLocaleString() : ''}${s.proto ? '　［試作・開発中のみ］' : ''}`;
-          return button(s.title, () => {
+          return songButton(s, page * PER + i, sub, () => {
             Session.songId = s.id;
             Nav.go('diffSelect');
-          }, { className: 'btn-song', sub, color: LANE_COLORS[(page * PER + i) % 4] });
+          });
         })
       );
       pageEl.textContent = pages > 1 ? `${page + 1} / ${pages}` : '';
@@ -1017,24 +1040,46 @@
    * 曲・難易度選択（CPU戦）：演争は曲数ぶん順番に選ぶ／協奏は1曲（7-1）
    * ========================================================= */
   function MatchSongScreen() {
-    const songs = playableSongs();
-    const need = Session.mode === 'battle' ? Math.max(1, Math.min(Session.songCount, songs.length)) : 1;
+    const songs = listedSongs();
+    const avail = songs.filter((s) => !isSongLocked(s)).length;
+    const need = Session.mode === 'battle' ? Math.max(1, Math.min(Session.songCount, avail)) : 1;
     const picked = [];
     const info = el('div', { class: 'diff-song' });
-    const cards = songs.map((s, i) => {
-      const badge = el('span', { class: 'pick-badge' });
-      const b = button(s.title, () => {
-        const k = picked.indexOf(s.id);
-        if (k >= 0) picked.splice(k, 1);
-        else if (need === 1) picked.splice(0, picked.length, s.id);
-        else if (picked.length < need) picked.push(s.id);
-        refresh();
-      }, { className: 'btn-song', sub: `${s.genre}　BPM ${s.bpm}${s.proto ? '　［試作・開発中のみ］' : ''}`, color: LANE_COLORS[i % 4] });
-      b.append(badge);
-      b._badge = badge;
-      b._id = s.id;
-      return b;
-    });
+    const PER = 6;
+    let page = 0;
+    const grid = el('div', { class: 'song-grid' });
+    const pageEl = el('div', { class: 'page-info' });
+    const prevB = button('◀', () => {
+      page--;
+      draw();
+    }, { className: 'btn-arrow' });
+    const nextB = button('▶', () => {
+      page++;
+      draw();
+    }, { className: 'btn-arrow' });
+    let cards = [];
+    function draw() {
+      const pages = Math.max(1, Math.ceil(songs.length / PER));
+      page = (page + pages) % pages;
+      cards = songs.slice(page * PER, page * PER + PER).map((s, i) => {
+        const badge = el('span', { class: 'pick-badge' });
+        const b = songButton(s, page * PER + i, `${s.genre}　BPM ${s.bpm}${s.proto ? '　［試作・開発中のみ］' : ''}`, () => {
+          const k = picked.indexOf(s.id);
+          if (k >= 0) picked.splice(k, 1);
+          else if (need === 1) picked.splice(0, picked.length, s.id);
+          else if (picked.length < need) picked.push(s.id);
+          refresh();
+        });
+        b.append(badge);
+        b._badge = badge;
+        b._id = s.id;
+        return b;
+      });
+      grid.replaceChildren(...cards);
+      pageEl.textContent = pages > 1 ? `${page + 1} / ${pages}` : '';
+      prevB.style.visibility = nextB.style.visibility = pages > 1 ? 'visible' : 'hidden';
+      refresh();
+    }
     const diffs = NLM.Songs.DIFFICULTIES.map((d, i) =>
       button(d.name, () => {
         Session.difficulty = d.id;
@@ -1049,13 +1094,14 @@
       });
       const ready = picked.length === need;
       diffs.forEach((b) => (b.disabled = !ready));
-      info.textContent = need > 1 ? `演奏する順に${need}曲選んでください（${picked.length}/${need}）。全曲同じ難易度です` : '曲を1つ選んでください';
+      const names = picked.map((id) => NLM.Songs.get(id).title).join(' → ');
+      info.textContent = (need > 1 ? `演奏する順に${need}曲選んでください（${picked.length}/${need}）。全曲同じ難易度です` : '曲を1つ選んでください') + (names ? `　選択中：${names}` : '');
     }
-    refresh();
+    draw();
     return {
       title: '曲・難易度選択',
       crumb: modeCrumb(),
-      body: el('div', { class: 'song-select' }, [info, el('div', { class: 'song-grid' }, cards), el('div', { class: 'grid grid-4' }, diffs)]),
+      body: el('div', { class: 'song-select' }, [info, el('div', { class: 'song-page' }, [prevB, grid, nextB]), pageEl, el('div', { class: 'grid grid-4' }, diffs)]),
     };
   }
 
@@ -1129,7 +1175,7 @@
     const ov = el('div', { class: 'unlock-ov dialog-ov' }, [
       el('div', { class: 'unlock-card dialog-card', style: { '--c': 'var(--neon-cyan)' } }, [
         el('div', { class: 'unlock-name', text: title }),
-        text ? el('div', { class: 'unlock-desc', text }) : null,
+        text ? el('div', { class: 'unlock-desc' }, text) : null,
         el('div', { class: 'foot-row' }, bs),
       ]),
     ]);
@@ -2611,10 +2657,11 @@
         const locked = !unlocked.has(s.id);
         const b = button(`${s.no}. ${s.title}`, () => pick(s), {
           className: 'btn-srow' + (locked ? ' is-locked' : ''),
-          sub: locked ? '🔒 未解禁　' + s.genre : s.genre,
+          sub: locked ? '未解禁　' + s.genre : s.genre,
           color: LANE_COLORS[(page * PER + i) % 4],
           id: 'song-' + s.id,
         });
+        if (locked) b.append(el('span', { class: 'song-lock', text: '🔒' }));
         b.addEventListener('focus', () => pick(s));
         return b;
       });
