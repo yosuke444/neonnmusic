@@ -426,6 +426,16 @@
       ]);
     });
 
+    // 処理速度の表示（確認用）：画面の左上に FPS などを出す（16-2・フェーズ9）
+    const fpsBtn = button('', () => {
+      s.showFps = !s.showFps;
+      commit();
+      NLM.FX.Perf.show(s.showFps);
+      fpsLabel();
+    }, { variant: 'sub', id: 'to-fps' });
+    const fpsLabel = () => (fpsBtn.querySelector('.btn-label').textContent = `処理速度の表示：${s.showFps ? 'オン' : 'オフ'}`);
+    fpsLabel();
+
     const note = Save.storageAvailable
       ? null
       : el('p', { class: 'warn', text: 'この端末では保存できません（プライベートモード等）。設定は再読み込みで元に戻ります。' });
@@ -433,7 +443,10 @@
     return {
       title: '設定',
       body: el('div', { class: 'settings-panel' }, [speedRow, el('div', { class: 'set-sep' }), ...volRows, note]),
-      foot: button('サウンドテスト（開発用）', () => Nav.go('soundTest'), { variant: 'sub', id: 'to-soundtest' }),
+      foot: el('div', { class: 'foot-row' }, [
+        button('サウンドテスト（開発用）', () => Nav.go('soundTest'), { variant: 'sub', id: 'to-soundtest' }),
+        fpsBtn,
+      ]),
     };
   }
 
@@ -1656,17 +1669,26 @@
     function updatePlist() {
       if (!multi) return;
       const order = mode === 'coop' ? B.players : B.standings().map((x) => x.p);
+      // 変化があった所だけ書き換える（32人でも軽く：16-2）
+      const set = (r, k, v, fn) => {
+        if (r.last[k] === v) return;
+        r.last[k] = v;
+        fn(v);
+      };
       order.forEach((p, i) => {
         const r = rows.get(p);
-        r.row.style.order = i;
+        r.last = r.last || {};
+        set(r, 'order', i, (v) => (r.row.style.order = v));
         if (mode === 'coop') {
-          r.fill.style.width = (B.shared.hp || 0) + '%';
-          r.pct.textContent = p.lastRes ? JUDGE_TEXT[p.lastRes] : '';
-          r.pct.className = 'pl-pct j-' + (p.lastRes || '');
+          set(r, 'w', Math.round(B.shared.hp || 0), (v) => (r.fill.style.width = v + '%'));
+          set(r, 'res', p.lastRes || '', (v) => {
+            r.pct.textContent = v ? JUDGE_TEXT[v] : '';
+            r.pct.className = 'pl-pct j-' + v;
+          });
         } else {
-          r.fill.style.width = Math.max(0, p.st.hp) + '%';
-          r.pct.textContent = Math.ceil(p.st.hp) + '%';
-          r.row.classList.toggle('is-out', !p.alive);
+          set(r, 'w', Math.max(0, Math.round(p.st.hp * 2) / 2), (v) => (r.fill.style.width = v + '%'));
+          set(r, 'pct', Math.ceil(p.st.hp), (v) => (r.pct.textContent = v + '%'));
+          set(r, 'out', !p.alive, (v) => r.row.classList.toggle('is-out', v));
         }
       });
     }
@@ -2889,6 +2911,7 @@
    * ========================================================= */
   Save.load();
   NLM.FX.start();
+  NLM.FX.Perf.show(Save.data.settings.showFps);
   // 長押しメニュー・ダブルタップ拡大を抑える
   document.addEventListener('contextmenu', (e) => {
     if (e.target.closest('.touch-zone, .lane')) e.preventDefault();

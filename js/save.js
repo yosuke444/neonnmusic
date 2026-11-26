@@ -20,6 +20,7 @@
       version: SAVE_VERSION,
       settings: {
         noteSpeed: 5.0, // 1.0〜10.0、0.5刻み（12章）
+        showFps: false, // 処理速度の表示（設定の奥：スマホでの動作確認用）
         volume: {
           master: 80, // 全体
           bgm: 80, // BGM（ドラム以外）

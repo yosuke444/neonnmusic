@@ -516,10 +516,13 @@
       this.g = this.cv.getContext('2d');
       for (let i = 0; i < MAXP; i++) this.free.push({ x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1, color: '#fff', size: 2, grav: 0 });
       const rs = () => {
-        this.dpr = Math.min(1.5, window.devicePixelRatio || 1);
+        // 重い時（budget < 1）は解像度を下げる。光のにじみなので見た目の差はほとんどない
+        this.dpr = this.budget < 1 ? 1 : Math.min(1.5, window.devicePixelRatio || 1);
         this.cv.width = Math.round(window.innerWidth * this.dpr);
         this.cv.height = Math.round(window.innerHeight * this.dpr);
+        this.dirty = true;
       };
+      this.resize = rs;
       window.addEventListener('resize', rs);
       rs();
     },
@@ -564,6 +567,10 @@
     frame(now, dt) {
       const g = this.g;
       const d = this.dpr;
+      // 何も飛んでいない時は描き直さない（画面に送る絵が変わらないので軽い：16-2）
+      const busy = this.parts.length || this.rings.length || this.beams.length;
+      if (!busy && !this.dirty) return;
+      this.dirty = !!busy;
       g.setTransform(d, 0, 0, d, 0, 0);
       g.clearRect(0, 0, this.cv.width, this.cv.height);
       g.globalCompositeOperation = 'lighter';
@@ -621,6 +628,39 @@
     },
   };
 
+  /* ---------- 処理速度の表示（設定の奥：スマホでの動作確認用・16-2） ---------- */
+  const Perf = {
+    el: null,
+    on: false,
+    frames: 0,
+    acc: 0,
+    worst: 0,
+    lastShow: 0,
+    show(on) {
+      this.on = !!on;
+      if (!this.el) {
+        this.el = document.createElement('div');
+        this.el.className = 'perf-hud';
+        document.body.append(this.el);
+      }
+      this.el.hidden = !this.on;
+    },
+    tick(now, dt) {
+      if (!this.on) return;
+      this.frames++;
+      this.acc += dt;
+      this.worst = Math.max(this.worst, dt);
+      if (now - this.lastShow < 500) return;
+      this.lastShow = now;
+      const fps = this.frames / Math.max(0.001, this.acc);
+      this.el.textContent = `${fps.toFixed(0)} FPS　最大 ${(this.worst * 1000).toFixed(0)}ms　粒 ${FX.parts.length}　演出 ${Math.round(FX.budget * 100)}%`;
+      this.el.classList.toggle('is-slow', fps < 45);
+      this.frames = 0;
+      this.acc = 0;
+      this.worst = 0;
+    },
+  };
+
   /* ---------- 1つのループで背景と演出を動かす ---------- */
   let last = 0;
   let avg = 16;
@@ -629,7 +669,14 @@
     last = now;
     // 重い時は粒を減らす（見た目の印象は保つ：16-2）
     avg = avg * 0.95 + dt * 1000 * 0.05;
-    FX.budget = avg > 28 ? 0.35 : avg > 20 ? 0.6 : 1;
+    // 60fps＝1フレーム約16.7ms。22msを超えたら減らし、18msを下回ったら戻す（行ったり来たりしないよう差を付ける）
+    const low = FX.budget < 1 ? avg > 18 : avg > 22;
+    const nb = !low ? 1 : avg > 28 ? 0.35 : 0.6;
+    if ((nb < 1) !== (FX.budget < 1)) {
+      FX.budget = nb;
+      FX.resize();
+    } else FX.budget = nb;
+    Perf.tick(now, dt);
     City.frame(now);
     FX.frame(now, dt);
     // 揺れ
@@ -641,6 +688,7 @@
 
   NLM.FX = Object.assign(FX, {
     City,
+    Perf,
     glow,
     start() {
       City.init();

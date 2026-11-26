@@ -2655,3 +2655,21 @@ body {
 .dialog-card .foot-row {
   margin-top: 8px;
 }
+
+/* 処理速度の表示（フェーズ9：設定の奥でオン） */
+.perf-hud {
+  position: fixed;
+  left: 6px;
+  top: 6px;
+  z-index: 50;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.72);
+  color: var(--neon-green);
+  font: 700 12px/1.5 'Russo One', monospace;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.perf-hud.is-slow {
+  color: var(--neon-red);
+}
