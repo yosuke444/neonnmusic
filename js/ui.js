@@ -497,12 +497,48 @@
    * 演出用の層（火花・光の輪・光の線・花火）
    * 粒は使い回す（作っては捨てない：16-2）。重い時は自動で数を減らす。
    * ========================================================= */
+  /* 粒をまとめた絵（色と向きごとに1回だけ描いて使い回す） */
+  const spriteCache = {};
+  function dotField(size, color, dots) {
+    const c = mk(size, size);
+    const g = c.getContext('2d');
+    g.globalCompositeOperation = 'lighter';
+    const gl = glow(color);
+    for (const [dx, dy, s] of dots) g.drawImage(gl, size / 2 + dx * size * 0.45 - s * 3, size / 2 + dy * size * 0.45 - s * 3, s * 6, s * 6);
+    return c;
+  }
+  function burstSprite(color, dir) {
+    const key = 'b' + color + dir;
+    if (spriteCache[key]) return spriteCache[key];
+    const R = rng(color.length * 31 + dir * 7 + 3);
+    const dots = [];
+    for (let i = 0; i < 16; i++) {
+      let a = R() * Math.PI * 2;
+      if (dir) a = (dir > 0 ? 0 : Math.PI) + (R() - 0.5) * 1.6;
+      const d = 0.35 + R() * 0.65;
+      dots.push([Math.cos(a) * d, Math.sin(a) * d, 2 + R() * 2.5]);
+    }
+    return (spriteCache[key] = dotField(128, color, dots));
+  }
+  function fireworkSprite(color) {
+    const key = 'f' + color;
+    if (spriteCache[key]) return spriteCache[key];
+    const dots = [];
+    for (let i = 0; i < 28; i++) {
+      const a = (i / 28) * Math.PI * 2;
+      dots.push([Math.cos(a) * 0.95, Math.sin(a) * 0.95, 2.6]);
+      if (i % 2) dots.push([Math.cos(a) * 0.6, Math.sin(a) * 0.6, 1.8]);
+    }
+    return (spriteCache[key] = dotField(160, color, dots));
+  }
+
   const MAXP = 700;
   const FX = {
     cv: null,
     g: null,
     dpr: 1,
     parts: [],
+    sprites: [], // 粒をまとめた絵（火花・花火）
     free: [],
     rings: [],
     beams: [],
@@ -533,15 +569,15 @@
       Object.assign(p, { x, y, vx, vy, color, life, max: life, size, grav: grav || 0 });
       this.parts.push(p);
     },
-    /** 火花。dir：飛ぶ向き（-1 左、1 右、0 全方向） */
+    /**
+     * 火花。dir：飛ぶ向き（-1 左、1 右、0 全方向）
+     * 軽量化：たくさんの粒を1つずつ動かさず、粒をまとめて描いた1枚の絵を広げて消す（1回の描画で済む）
+     */
     burst(x, y, color, count, speed, dir) {
-      const n = Math.round(count * this.budget);
-      for (let i = 0; i < n; i++) {
-        let a = Math.random() * Math.PI * 2;
-        if (dir) a = (dir > 0 ? 0 : Math.PI) + (Math.random() - 0.5) * 1.6;
-        const v = speed * (0.4 + Math.random() * 0.8);
-        this.spark(x, y, Math.cos(a) * v, Math.sin(a) * v, color, 0.35 + Math.random() * 0.45, 1.5 + Math.random() * 2.5, 300);
-      }
+      if (this.budget < 0.5 && count < 20) return; // 重い時は小さな火花を省く
+      const scale = Math.min(1.6, 0.6 + count / 40);
+      this.sprites.push({ x, y, img: burstSprite(color, dir || 0), r: speed * 0.55 * scale, life: 0.5, t: 0, grav: 160 });
+      this.dirty = true;
     },
     ring(x, y, color, r, dur, width) {
       this.rings.push({ x, y, color, r, dur, width: width || 4, t: 0 });
@@ -550,13 +586,10 @@
       this.beams.push({ x1, y1, x2, y2, color, dur: dur || 0.45, t: 0 });
     },
     firework(x, y, color) {
-      const n = Math.round(60 * this.budget);
-      for (let i = 0; i < n; i++) {
-        const a = (i / n) * Math.PI * 2;
-        const v = 160 + Math.random() * 60;
-        this.spark(x, y, Math.cos(a) * v, Math.sin(a) * v, color, 1 + Math.random() * 0.5, 2.5, 90);
-      }
+      // 花火も1枚の絵（輪に並んだ光の粒）を広げて落とす
+      this.sprites.push({ x, y, img: fireworkSprite(color), r: 190, life: 1.3, t: 0, grav: 60 });
       this.ring(x, y, color, 120, 0.5, 3);
+      this.dirty = true;
     },
     /** 画面の揺れ（背景と演出の層だけを揺らす。レーンは揺らさない） */
     shake(amp, dur) {
@@ -568,7 +601,7 @@
       const g = this.g;
       const d = this.dpr;
       // 何も飛んでいない時は描き直さない（画面に送る絵が変わらないので軽い：16-2）
-      const busy = this.parts.length || this.rings.length || this.beams.length;
+      const busy = this.parts.length || this.rings.length || this.beams.length || this.sprites.length;
       if (!busy && !this.dirty) return;
       this.dirty = !!busy;
       g.setTransform(d, 0, 0, d, 0, 0);
@@ -605,7 +638,22 @@
         g.stroke();
       }
       g.globalAlpha = 1;
-      // 火花
+      // 火花・花火（粒をまとめた1枚の絵）
+      for (let i = this.sprites.length - 1; i >= 0; i--) {
+        const sp = this.sprites[i];
+        sp.t += dt;
+        if (sp.t >= sp.life) {
+          this.sprites[i] = this.sprites[this.sprites.length - 1];
+          this.sprites.pop();
+          continue;
+        }
+        const k = sp.t / sp.life;
+        const ease = 1 - (1 - k) * (1 - k);
+        const rr = Math.max(4, sp.r * (0.25 + ease * 0.75));
+        g.globalAlpha = 1 - k * k;
+        g.drawImage(sp.img, sp.x - rr, sp.y - rr + sp.grav * sp.t * sp.t, rr * 2, rr * 2);
+      }
+      g.globalAlpha = 1;
       for (let i = this.parts.length - 1; i >= 0; i--) {
         const p = this.parts[i];
         p.life -= dt;

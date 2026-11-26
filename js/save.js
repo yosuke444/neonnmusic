@@ -22,6 +22,9 @@
         noteSpeed: 5.0, // 1.0〜10.0、0.5刻み（12章）
         showFps: false, // 処理速度の表示（設定の奥：スマホでの動作確認用）
         name: '', // フレンド対戦で表示する名前（最大8文字）
+        tapSound: 'kat', // 打鍵音：kat / click / drum / clap / bell / off
+        judgeOffset: 0, // 音と判定のずれ（ミリ秒）：＋なら遅めに叩いてもぴったり扱い
+        visualOffset: 0, // 音と表示のずれ（ミリ秒）：＋ならノーツを遅らせて表示
         volume: {
           master: 80, // 全体
           bgm: 80, // BGM（ドラム以外）
@@ -100,6 +103,9 @@
   function sanitize(d) {
     const s = d.settings;
     s.noteSpeed = clamp(Math.round(Number(s.noteSpeed) * 2) / 2 || 5, 1, 10);
+    if (!['kat', 'click', 'drum', 'clap', 'bell', 'off'].includes(s.tapSound)) s.tapSound = 'kat';
+    s.judgeOffset = clamp(Math.round(Number(s.judgeOffset) || 0), -300, 300);
+    s.visualOffset = clamp(Math.round(Number(s.visualOffset) || 0), -300, 300);
     for (const k of Object.keys(s.volume)) {
       s.volume[k] = clamp(Math.round(Number(s.volume[k]) || 0), 0, 100);
     }

@@ -70,6 +70,8 @@
         /* 無視 */
       }
       if (ctx.state !== 'running') ctx.resume().catch(() => {});
+      // 効果音の作り置き（叩いた瞬間に音源1つを鳴らすだけにする）
+      setTimeout(() => this.preloadSfx(), 0);
 
       // タブ復帰時に再開し、時計を取り直す
       document.addEventListener('visibilitychange', () => {
@@ -182,7 +184,47 @@
     sfx(name) {
       const ctx = this.ctx;
       if (!ctx || ctx.state !== 'running') return;
-      const t = ctx.currentTime + 0.003;
+      if (name === 'tap') {
+        // 打鍵音は設定で選ぶ（なしも選べる）
+        const v = (NLM.Save && NLM.Save.data && NLM.Save.data.settings.tapSound) || 'kat';
+        if (v === 'off') return;
+        name = 'tap_' + v;
+      }
+      // 作り置きの音があれば、音源1つを鳴らすだけ（叩いた瞬間の処理を軽く・速く：フェーズ9のあと）
+      const c = this._sfxCache[name];
+      if (c) {
+        const src = ctx.createBufferSource();
+        src.buffer = c.buf;
+        src.connect(this.buses[c.bus]);
+        src.start();
+        return;
+      }
+      this._voice(ctx, (bus) => this.buses[bus], ctx.currentTime + 0.003, name);
+      this._prerender(name);
+    },
+    _sfxCache: {},
+    _sfxPending: {},
+    /** 効果音を前もって書き出しておく */
+    _prerender(name) {
+      const ctx = this.ctx;
+      if (!ctx || this._sfxCache[name] || this._sfxPending[name] || !window.OfflineAudioContext) return;
+      this._sfxPending[name] = true;
+      const sr = ctx.sampleRate;
+      const off = new OfflineAudioContext(1, Math.round(sr * 1.4), sr);
+      let bus = 'se';
+      this._voice(off, (b) => ((bus = b), off.destination), 0, name);
+      off
+        .startRendering()
+        .then((buf) => (this._sfxCache[name] = { buf, bus }))
+        .catch(() => {})
+        .finally(() => delete this._sfxPending[name]);
+    },
+    /** よく使う効果音を作り置き（起動時） */
+    preloadSfx() {
+      ['tap_kat', 'tap_click', 'tap_drum', 'tap_clap', 'tap_bell', 'perfect', 'great', 'miss', 'key', 'combo', 'skill', 'attacked', 'warn', 'hurt', 'count', 'go', 'move', 'select', 'back'].forEach((n) => this._prerender(n));
+    },
+    /** 効果音の中身（bus：鳴らす系統の名前 → 出口） */
+    _voice(ctx, busOf, t, name) {
       const tone = (bus, type, f0, f1, dur, gain, at) => {
         const s = t + (at || 0);
         const o = ctx.createOscillator();
@@ -193,7 +235,7 @@
         gn.gain.setValueAtTime(0.0001, s);
         gn.gain.exponentialRampToValueAtTime(gain, s + 0.004);
         gn.gain.exponentialRampToValueAtTime(0.0001, s + dur);
-        o.connect(gn).connect(this.buses[bus]);
+        o.connect(gn).connect(busOf(bus));
         o.start(s);
         o.stop(s + dur + 0.02);
       };
@@ -213,15 +255,32 @@
         const gn = ctx.createGain();
         gn.gain.setValueAtTime(gain, s);
         gn.gain.exponentialRampToValueAtTime(0.0001, s + dur);
-        n.connect(f).connect(gn).connect(this.buses[bus]);
+        n.connect(f).connect(gn).connect(busOf(bus));
         n.start(s);
         n.stop(s + dur + 0.02);
       };
       switch (name) {
-        case 'tap': // 打鍵音：はっきり大きく「カッ」（監督の決定：大きく気持ちよく）
+        /* 打鍵音（設定で選ぶ） */
+        case 'tap_kat': // カッ：はっきり大きく（監督の決定：大きく気持ちよく）
           hiss('se', 1800, 0.045, 0.5);
           tone('se', 'triangle', 1300, 650, 0.05, 0.3);
           tone('se', 'sine', 190, 90, 0.07, 0.35);
+          break;
+        case 'tap_click': // カチッ：短く高い
+          hiss('se', 4000, 0.02, 0.45);
+          tone('se', 'square', 2400, 2400, 0.02, 0.12);
+          break;
+        case 'tap_drum': // ドン：太鼓
+          tone('se', 'sine', 150, 70, 0.13, 0.65);
+          hiss('se', 600, 0.05, 0.18);
+          break;
+        case 'tap_clap': // パン：手拍子
+          hiss('se', 1000, 0.08, 0.5);
+          hiss('se', 1500, 0.03, 0.3, 0.012);
+          break;
+        case 'tap_bell': // チン：鈴
+          tone('se', 'sine', 2093, 2093, 0.18, 0.25);
+          tone('se', 'sine', 4186, 4186, 0.1, 0.08);
           break;
         case 'perfect': // パーフェクト：きらっと光る高い音
           tone('se', 'sine', 2637, 2637, 0.16, 0.22);

@@ -150,6 +150,21 @@
   };
 
   /** 割合（0〜1）で成績の指標 */
+  /**
+   * ランク（フェーズ9のあと・監督の決定）：達成率で S（95%以上）A（90%）B（80%）C（70%）D。
+   * フルコンボ（ミス0）・オールパーフェクト（ミスもグレイトも0）の印も付ける。
+   */
+  J.RANKS = ['S', 'A', 'B', 'C', 'D'];
+  J.rankOf = function (st) {
+    const acc = J.accuracy(st);
+    const c = st.counts;
+    const rank = acc >= 0.95 ? 'S' : acc >= 0.9 ? 'A' : acc >= 0.8 ? 'B' : acc >= 0.7 ? 'C' : 'D';
+    const any = c.perfect + c.great + c.miss + c.auto > 0;
+    return { rank, acc, fc: any && c.miss === 0, ap: any && c.miss === 0 && c.great === 0 };
+  };
+  /** 良い方のランク */
+  J.betterRank = (a, b) => (!a ? b : !b ? a : J.RANKS.indexOf(a) <= J.RANKS.indexOf(b) ? a : b);
+
   J.accuracy = function (st) {
     const c = st.counts;
     const n = c.perfect + c.great + c.miss + c.auto;

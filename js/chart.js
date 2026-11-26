@@ -137,7 +137,7 @@
     const c = NLM.Music.compile(song);
     const spb = c.spb;
     const bpb = c.beatsPerBar;
-    const seed = hashStr(song.id);
+    const seed = hashStr(song.chartSeed || song.id); // 練習用の遅い版（chartSeed＝元の曲ID）も同じ譜面になる
     const R0 = rng(seed);
     const styleMap = guessStyle(song, R0);
     // 曲ごとの個性：密度の揺らぎ、左右反転、階段の形
@@ -322,6 +322,8 @@
       // 指の数（監督の決定）：エクストラ以外は、長押し中の指も含めて同時に2つまで。エクストラは3つまで。
       // 超えた時は、この難易度で足した音から外す（下の難易度の譜面はそのまま残す）
       limitFingers(live, d === 'extra' ? 3 : 2, di, noteOf, partners, spb);
+      // 2本指の追加条件（監督の決定）：左から2番目の長押し中は一番左、右から2番目の長押し中は一番右にノーツを置かない
+      if (d !== 'extra') limitHoldSides(live, di, noteOf, partners, spb);
 
       // この難易度の譜面を書き出す（ノーツはコピー。長押しは終点の「離す」ノーツを付ける）
       const out = [];
@@ -383,21 +385,7 @@
   function limitFingers(live, cap, di, noteOf, partners, spb) {
     const EPS = 1e-6;
     const times = [...new Set(live.map((n) => n.t))].sort((a, b) => a - b);
-    const remove = (n) => {
-      const i = live.indexOf(n);
-      if (i >= 0) live.splice(i, 1);
-      if (n.partner) {
-        const list = partners.get(n._o);
-        if (list) list.splice(list.indexOf(n), 1);
-      } else if (n._o && noteOf.get(n._o) === n) {
-        noteOf.delete(n._o);
-        for (const m of partners.get(n._o) || []) {
-          const k = live.indexOf(m);
-          if (k >= 0) live.splice(k, 1);
-        }
-        partners.delete(n._o);
-      }
-    };
+    const remove = (n) => removeNote(live, n, noteOf, partners);
     for (const T of times) {
       for (let guard = 0; guard < 8; guard++) {
         const starts = live.filter((n) => Math.abs(n.t - T) < EPS);
@@ -420,6 +408,54 @@
         const victim = pick || starts.find((n) => n.born === di) || starts.find((n) => n.partner) || starts[starts.length - 1];
         if (!victim) break;
         remove(victim);
+      }
+    }
+  }
+
+  /** ノーツを外す（本体なら同時押しの相方も外し、上の難易度で引き継がれないようにする） */
+  function removeNote(live, n, noteOf, partners) {
+    const i = live.indexOf(n);
+    if (i >= 0) live.splice(i, 1);
+    if (n.partner) {
+      const list = partners.get(n._o);
+      if (list && list.includes(n)) list.splice(list.indexOf(n), 1);
+    } else if (n._o && noteOf.get(n._o) === n) {
+      noteOf.delete(n._o);
+      for (const m of partners.get(n._o) || []) {
+        const k = live.indexOf(m);
+        if (k >= 0) live.splice(k, 1);
+      }
+      partners.delete(n._o);
+    }
+  }
+
+  /**
+   * 長押しが左から2番目（レーン1）の間は一番左（レーン0）、右から2番目（レーン2）の間は一番右（レーン3）にノーツを置かない。
+   * 直し方：外側のノーツがこの難易度で足した音なら外す。そうでなければ、この難易度で長押しにした音を手前で終わらせる
+   * （短すぎれば通常ノーツに戻す）。下の難易度の譜面はそのまま残る。
+   */
+  function limitHoldSides(live, di, noteOf, partners, spb) {
+    const EPS = 1e-6;
+    for (const h of live.filter((n) => n.type === 'hold' && (n.lane === 1 || n.lane === 2))) {
+      for (let guard = 0; guard < 16; guard++) {
+        if (!live.includes(h) || h.type !== 'hold') break;
+        const outer = h.lane === 1 ? 0 : 3;
+        const bad = live
+          .filter((n) => n.lane === outer && n.type !== 'release' && ((n.t >= h.t - EPS && n.t <= h.end + 0.05) || (n.type === 'hold' && n.t < h.t && n.end > h.t - EPS)))
+          .sort((a, b) => a.t - b.t);
+        if (!bad.length) break;
+        const b = bad[0];
+        if (b.born === di && b.t >= h.t - EPS) {
+          removeNote(live, b, noteOf, partners);
+          continue;
+        }
+        // 長押しの方を手前で終わらせる
+        const end = b.t - Math.max(0.12, spb * 0.5);
+        if (b.t > h.t + EPS && end - h.t >= spb * 0.5) h.end = end;
+        else {
+          h.type = 'tap';
+          h.end = undefined;
+        }
       }
     }
   }

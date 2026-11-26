@@ -76,6 +76,8 @@
         noSkill,
         lastSkillAt: -99,
         sharedDelta: 0, // 協奏：この人のせいで共通HPが増減した量（曲ごと）
+        // 振り返り用（演争の結果）：スキルを使った回数・攻撃した／された回数・誰から何回
+        stats: { skills: 0, attacksOut: 0, attacksIn: 0, hitBy: {}, hitTo: {}, missUnder: 0 },
       };
     });
     const shared = mode === 'coop' ? { hp: J.HP_MAX, scale: 2 / players.length } : null;
@@ -149,6 +151,16 @@
     function applySkill(p, targets, t, lanes, out) {
       const sk = p.char.skill;
       const { effects } = skillOf(p);
+      p.stats.skills++;
+      if (sk.attack && mode !== 'solo') {
+        for (const q of targets) {
+          if (q === p) continue;
+          p.stats.attacksOut++;
+          q.stats.attacksIn++;
+          q.stats.hitBy[p.idx] = (q.stats.hitBy[p.idx] || 0) + 1;
+          p.stats.hitTo[q.idx] = (p.stats.hitTo[q.idx] || 0) + 1;
+        }
+      }
       for (const e of effects) {
         switch (e.type) {
           case 'heal':
@@ -277,6 +289,7 @@
           for (const p of players) {
             if (!p.cpu || !p.alive || !owns(p)) continue;
             const res = cpuResult(p, note, note.t);
+            if (res === 'miss' && disruptPower(p, note.t) > 0) p.stats.missUnder++;
             const r = J.apply(p.st, note, res, note.t);
             p.results[ptr] = res;
             if (shared) out.push({ type: 'judge', p, result: res, note, i: ptr });

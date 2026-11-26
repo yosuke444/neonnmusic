@@ -12,6 +12,7 @@
     battle: { name: '演争モード', en: 'BATTLE', color: 'var(--neon-pink)' },
     coop: { name: '協奏モード', en: 'SESSION', color: 'var(--neon-cyan)' },
     solo: { name: '独奏モード', en: 'SOLO', color: 'var(--neon-yellow)' },
+    tutorial: { name: 'チュートリアル', en: 'TUTORIAL', color: 'var(--neon-green)' },
   };
   const LANE_KEYS = ['KeyF', 'KeyG', 'KeyH', 'KeyJ']; // 4章：F・G・H・J
   const LANE_LABELS = ['F', 'G', 'H', 'J'];
@@ -256,6 +257,7 @@
             modeBtn('battle', '最後の一人まで残れ（2〜32人）', 'opponent'),
             modeBtn('coop', 'みんなで1曲を奏でる（2〜32人）', 'opponent'),
             modeBtn('solo', 'ひとりで腕を磨く', 'charSelect'),
+            button(MODES.tutorial.name, () => startTutorial(), { variant: 'primary', sub: '遊び方を順番に覚える', color: MODES.tutorial.color, className: 'btn-mode btn-mode-tut', en: MODES.tutorial.en }),
           ]),
           el('div', { class: 'menu-sub' }, [
             button('キャラ一覧', () => Nav.go('charList'), { variant: 'sub' }),
@@ -322,6 +324,11 @@
       return SongSelectScreen();
     },
 
+    /* ---------- 練習（独奏：区間・速さを選ぶ） ---------- */
+    practice() {
+      return PracticeScreen();
+    },
+
     /* ---------- 難易度選択（独奏） ---------- */
     diffSelect() {
       return DiffSelectScreen();
@@ -351,6 +358,11 @@
     /* ---------- 設定（12章） ---------- */
     settings() {
       return SettingsScreen();
+    },
+
+    /* ---------- タイミング調整（拍に合わせて叩いて測る） ---------- */
+    calib() {
+      return CalibScreen();
     },
 
     /* ---------- サウンドテスト（設定の奥・10-5） ---------- */
@@ -386,6 +398,53 @@
         button('＋', () => stepSpeed(0.5), { className: 'btn-step', id: 'speed-up' }),
       ]),
     ]);
+
+    // 打鍵音の選択（なしも選べる）
+    const TAPS = [
+      ['kat', 'カッ'],
+      ['click', 'カチッ'],
+      ['drum', 'ドン'],
+      ['clap', 'パン'],
+      ['bell', 'チン'],
+      ['off', 'なし'],
+    ];
+    const tapBtns = TAPS.map(([v, label]) => {
+      const b = button(label, () => {
+        s.tapSound = v;
+        commit();
+        syncTap();
+        AE.sfx('tap'); // 選んだ音を試しに鳴らす
+      }, { className: 'btn-toggle' });
+      b.dataset.v = v;
+      return b;
+    });
+    const syncTap = () => tapBtns.forEach((b) => b.classList.toggle('is-on', b.dataset.v === s.tapSound));
+    syncTap();
+    const tapRow = el('div', { class: 'set-row set-row-wide' }, [el('label', { class: 'set-label', text: '打鍵音' }), el('div', { class: 'set-control toggles' }, tapBtns)]);
+
+    // タイミング調整（音と判定・音と表示のずれ）
+    const offRow = (label, key, id) => {
+      const val = el('span', { class: 'set-value' });
+      const show = () => (val.textContent = (s[key] > 0 ? '+' : '') + s[key] + 'ms');
+      show();
+      const step = (d) => {
+        s[key] = Math.max(-300, Math.min(300, s[key] + d));
+        show();
+        commit();
+      };
+      return el('div', { class: 'set-row' }, [
+        el('label', { class: 'set-label', text: label }),
+        el('div', { class: 'set-control stepper' }, [
+          button('−10', () => step(-10), { className: 'btn-step btn-step5' }),
+          button('−', () => step(-1), { className: 'btn-step', id: id + '-down' }),
+          val,
+          button('＋', () => step(1), { className: 'btn-step', id: id + '-up' }),
+          button('＋10', () => step(10), { className: 'btn-step btn-step5' }),
+        ]),
+      ]);
+    };
+    const judgeRow = offRow('音と判定のずれ', 'judgeOffset', 'joff');
+    const visRow = offRow('音と表示のずれ', 'visualOffset', 'voff');
 
     // 音量
     const VOLS = [
@@ -442,11 +501,108 @@
 
     return {
       title: '設定',
-      body: el('div', { class: 'settings-panel' }, [speedRow, el('div', { class: 'set-sep' }), ...volRows, note]),
+      body: el('div', { class: 'settings-panel settings-scroll' }, [
+        speedRow,
+        tapRow,
+        el('div', { class: 'set-sep' }),
+        judgeRow,
+        visRow,
+        el('div', { class: 'set-hint', text: '叩いた音や判定が遅れて感じる時は「タイミング調整」で自動で測れます' }),
+        el('div', { class: 'set-sep' }),
+        ...volRows,
+        note,
+      ]),
       foot: el('div', { class: 'foot-row' }, [
+        button('タイミング調整', () => Nav.go('calib'), { variant: 'primary', id: 'to-calib' }),
         button('サウンドテスト（開発用）', () => Nav.go('soundTest'), { variant: 'sub', id: 'to-soundtest' }),
         fpsBtn,
       ]),
+    };
+  }
+
+  /* =========================================================
+   * タイミング調整：メトロノームに合わせて叩き、ずれの中央値を「音と判定のずれ」にする
+   * ========================================================= */
+  function CalibScreen() {
+    const BPM = 100;
+    const SPB = 60 / BPM;
+    const BEATS = 24; // 最初の4拍は慣らし
+    const s = Save.data.settings;
+    let start = null; // 1拍目の音声時刻
+    let diffs = [];
+    let ended = false;
+    const pad = el('div', { class: 'calib-pad' }, [el('div', { class: 'calib-ring' }), el('div', { class: 'calib-dot' })]);
+    const info = el('div', { class: 'calib-info', text: '「スタート」を押し、音に合わせて大きな丸（またはキー）を叩いてください' });
+    const result = el('div', { class: 'calib-result' });
+    const cur = el('div', { class: 'calib-cur' });
+    const applyBtn = button('この値にする', () => {
+      s.judgeOffset = Math.max(-300, Math.min(300, median()));
+      Save.save();
+      cur.textContent = `今の設定：音と判定のずれ ${fmt(s.judgeOffset)}`;
+      AE.sfx('key');
+    }, { variant: 'primary', className: 'btn-next' });
+    applyBtn.disabled = true;
+    const fmt = (v) => (v > 0 ? '+' : '') + Math.round(v) + 'ms';
+    cur.textContent = `今の設定：音と判定のずれ ${fmt(s.judgeOffset)}`;
+    function median() {
+      const a = diffs.slice().sort((x, y) => x - y);
+      return a.length ? Math.round(a[a.length >> 1]) : 0;
+    }
+    function begin() {
+      AE.init();
+      diffs = [];
+      applyBtn.disabled = true;
+      result.textContent = '';
+      start = AE.now() + 1.0;
+      for (let i = 0; i < BEATS; i++) AE.click(start + i * SPB, i % 4 === 0);
+      info.textContent = '音に合わせて叩いてください（最初の4拍は慣らし）';
+    }
+    function tap(ts) {
+      if (start === null) return;
+      const at = AE.perfToAudio(ts);
+      const k = Math.round((at - start) / SPB);
+      if (k < 4 || k >= BEATS) return;
+      const d = (at - (start + k * SPB)) * 1000;
+      if (Math.abs(d) > 250) return; // 大きく外れた叩きは数えない
+      diffs.push(d);
+      pad.classList.remove('hit');
+      void pad.offsetWidth;
+      pad.classList.add('hit');
+      result.textContent = `${diffs.length}回　ずれの中央値 ${fmt(median())}（＋は遅め）`;
+      if (diffs.length >= 8) applyBtn.disabled = false;
+    }
+    pad.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      tap(e.timeStamp);
+    });
+    return {
+      title: 'タイミング調整',
+      crumb: '設定',
+      color: 'var(--neon-cyan)',
+      body: el('div', { class: 'calib' }, [info, pad, result, cur]),
+      foot: el('div', { class: 'foot-row' }, [button('スタート', begin, { variant: 'primary', id: 'calib-start' }), applyBtn]),
+      onEnter() {
+        GameLoop.start((now) => {
+          if (start === null || ended) return;
+          const b = (now - start) / SPB;
+          const ph = b >= 0 && b < BEATS ? b - Math.floor(b) : 1;
+          pad.style.setProperty('--ph', Math.max(0, 1 - ph * 3).toFixed(3)); // 拍の瞬間に光る
+          if (b >= BEATS + 0.5 && start !== null) {
+            start = null;
+            info.textContent = diffs.length >= 8 ? `測定おわり：「この値にする」で ${fmt(median())} に設定します` : '叩いた回数が少なすぎます。もう一度「スタート」';
+          }
+        });
+      },
+      onLeave() {
+        ended = true;
+        GameLoop.stop();
+      },
+      onKey(e) {
+        if (e.repeat || e.key === 'Escape' || e.key === 'Tab' || e.key === 'Enter') return false;
+        if (start === null) return false;
+        tap(e.timeStamp);
+        return true;
+      },
     };
   }
 
@@ -750,6 +906,19 @@
     // 本編の曲ができるまでは、開発確認用に試作曲を出す（試作曲は本編では遊べない）
     return real.length ? real : all.filter((s) => s.proto);
   }
+  /** ランクの表示（大きな文字＋フルコンボ・オールパーフェクトの印） */
+  function rankBadge(rk, isNew) {
+    return el('div', { class: 'rank-badge r-' + rk.rank }, [
+      el('span', { class: 'rank-letter', text: rk.rank }),
+      rk.ap ? el('span', { class: 'rank-mark is-ap', text: 'ALL PERFECT' }) : rk.fc ? el('span', { class: 'rank-mark is-fc', text: 'FULL COMBO' }) : null,
+      isNew ? el('span', { class: 'res-new', text: 'ランク更新！' }) : null,
+    ]);
+  }
+  /** 自己ベストのランクの小さな表示 */
+  function rankChip(b) {
+    if (!b || !b.rank) return null;
+    return el('span', { class: 'rank-chip r-' + b.rank }, [b.rank, b.ap ? el('i', { text: 'AP' }) : b.fc ? el('i', { text: 'FC' }) : null]);
+  }
   function bestOf(songId, diff) {
     const b = Save.data.bests[songId];
     return (b && b[diff]) || null;
@@ -832,6 +1001,8 @@
         startMatch([song.id], d.id);
       }, { className: 'btn-diff btn-diff2', color: DIFF_COLORS[i], sub: `ノーツ ${ch.stats.count}${b ? '　ベスト ' + b.score.toLocaleString() : ''}`, id: 'diff-' + d.id });
       btn.prepend(el('span', { class: 'diff-lv', text: ch.level }));
+      const chip = rankChip(b);
+      if (chip) btn.append(chip);
       return btn;
     });
     return {
@@ -839,6 +1010,7 @@
       crumb: crumb(modeCrumb(), song.title),
       color: MODES.solo.color,
       body: [el('div', { class: 'diff-song', text: `${song.title}　／　${song.genre}　BPM ${song.bpm}` }), el('div', { class: 'grid grid-4' }, btns)],
+      foot: button('練習する（区間・速さを選ぶ）', () => Nav.go('practice'), { variant: 'sub', id: 'to-practice' }),
     };
   }
 
@@ -1102,6 +1274,136 @@
       title: '曲・難易度選択',
       crumb: modeCrumb(),
       body: el('div', { class: 'song-select' }, [info, el('div', { class: 'song-page' }, [prevB, grid, nextB]), pageEl, el('div', { class: 'grid grid-4' }, diffs)]),
+    };
+  }
+
+  /**
+   * 練習用の譜面：元の曲の譜面から区間 [from, to) を切り出し、速さに合わせて時刻を伸ばす（ノーツの並びは本番と同じ）
+   */
+  function practiceChart(orig, pr, slowSong) {
+    const r = pr.rate;
+    const keep = new Set();
+    orig.notes.forEach((n, i) => {
+      if (n.type === 'release') return;
+      if (n.t >= pr.from - 1e-6 && n.t < pr.to - 1e-6) {
+        keep.add(i);
+        if (n.type === 'hold' && n.tail !== undefined) keep.add(n.tail);
+      }
+    });
+    const idx = [...keep].sort((a, b) => a - b);
+    const map = new Map(idx.map((i, k) => [i, k]));
+    const notes = idx.map((i) => {
+      const n = Object.assign({}, orig.notes[i]);
+      n.t /= r;
+      if (n.end !== undefined) n.end /= r;
+      if (n.tail !== undefined) n.tail = map.get(n.tail);
+      if (n.type === 'roll' && n.target) n.target = Math.max(4, Math.round(n.target * r));
+      return n;
+    });
+    const compiled = NLM.Music.compile(slowSong);
+    return Object.assign({}, orig, { notes, compiled, duration: pr.to / r + 1 });
+  }
+
+  /** チュートリアルを始める（メニューから選ぶモード） */
+  function startTutorial() {
+    AE.init();
+    Session.mode = 'solo';
+    Session.match = {
+      mode: 'solo',
+      difficulty: 'easy',
+      songs: ['tutorial'],
+      index: 0,
+      played: [],
+      auto: false,
+      preview: false,
+      tutorial: true,
+      battle: NLM.Battle.create({ mode: 'solo', players: [{ name: 'あなた', charId: Session.charId || 'neonyan', local: true }], seed: 1 }),
+      recorded: false,
+    };
+    Nav.goWithStack([{ id: 'menu' }], 'play', {});
+  }
+
+  /** 練習を始める：opts = { songId, difficulty, from, to（秒）, rate } */
+  function startPractice(opts) {
+    const base = NLM.Songs.get(opts.songId);
+    const slow = opts.rate === 1 ? base : Object.assign({}, base, { id: base.id + '@' + opts.rate, bpm: base.bpm * opts.rate, chartSeed: base.id });
+    Session.mode = 'solo';
+    Session.match = {
+      mode: 'solo',
+      difficulty: opts.difficulty,
+      songs: [base.id],
+      index: 0,
+      played: [],
+      auto: false,
+      preview: false,
+      practice: { songId: base.id, from: opts.from, to: opts.to, rate: opts.rate, label: opts.label },
+      songObj: slow,
+      battle: NLM.Battle.create({ mode: 'solo', players: [{ name: 'あなた', charId: Session.charId || 'neonyan', local: true }], seed: 1 }),
+      recorded: false,
+    };
+    Nav.goWithStack([{ id: 'menu' }, { id: 'charSelect' }, { id: 'songSelect' }, { id: 'diffSelect' }, { id: 'practice' }], 'play', {});
+  }
+
+  /* 練習の設定：難易度・区間・速さ */
+  function PracticeScreen() {
+    const song = NLM.Songs.get(Session.songId) || playableSongs()[0];
+    const c = NLM.Music.compile(song);
+    const P = (Session.practiceOpts = Session.practiceOpts && Session.practiceOpts.songId === song.id ? Session.practiceOpts : { songId: song.id, difficulty: Session.difficulty || 'normal', sec: -1, rate: 1 });
+    const toggles = (items, get, set) => {
+      const bs = items.map(([v, t]) => {
+        const b = button(t, () => {
+          set(v);
+          sync();
+        }, { className: 'btn-toggle' });
+        b.dataset.v = v;
+        return b;
+      });
+      const box = el('div', { class: 'set-control toggles' }, bs);
+      box._sync = () => bs.forEach((b) => b.classList.toggle('is-on', String(get()) === b.dataset.v));
+      return box;
+    };
+    const diffT = toggles(NLM.Songs.DIFFICULTIES.map((d) => [d.id, d.name]), () => P.difficulty, (v) => (P.difficulty = v));
+    const secs = [[-1, '曲の全体']].concat(c.sections.map((x, i) => [i, `${x.name}（${x.bars}小節）`]));
+    const secT = toggles(secs, () => P.sec, (v) => (P.sec = Number(v)));
+    const rateT = toggles(
+      [
+        [1, '1倍'],
+        [0.75, '0.75倍'],
+        [0.5, '0.5倍'],
+      ],
+      () => P.rate,
+      (v) => (P.rate = Number(v))
+    );
+    function sync() {
+      diffT._sync();
+      secT._sync();
+      rateT._sync();
+    }
+    sync();
+    const go = () => {
+      let from = 0;
+      let to = c.duration + 1;
+      let label = '曲の全体';
+      if (P.sec >= 0) {
+        const x = c.sections[P.sec];
+        from = x.startBeat * c.spb;
+        to = (x.startBeat + x.beats) * c.spb;
+        label = x.name;
+      }
+      Session.difficulty = P.difficulty;
+      startPractice({ songId: song.id, difficulty: P.difficulty, from, to, rate: P.rate, label });
+    };
+    return {
+      title: '練習',
+      crumb: crumb(modeCrumb(), song.title),
+      color: MODES.solo.color,
+      body: el('div', { class: 'settings-panel practice-panel' }, [
+        el('div', { class: 'diff-song', text: `${song.title}　／　練習は記録・解禁に数えません` }),
+        el('div', { class: 'set-row set-row-wide' }, [el('label', { class: 'set-label', text: '難易度' }), diffT]),
+        el('div', { class: 'set-row set-row-wide' }, [el('label', { class: 'set-label', text: '区間' }), secT]),
+        el('div', { class: 'set-row set-row-wide' }, [el('label', { class: 'set-label', text: '速さ' }), rateT]),
+      ]),
+      foot: nextButton('練習を始める', go),
     };
   }
 
@@ -1638,10 +1940,13 @@
     const B = match.battle;
     const net = !!match.net; // フレンド対戦（14章）
     const me = B.players.find((p) => p.local);
-    const song = NLM.Songs.get(match.songs[match.index]);
+    const practice = match.practice || null; // 練習：{ songId, from, to（元の曲の秒）, rate }
+    const song = match.songObj || NLM.Songs.get(match.songs[match.index]); // 練習の遅い版は match.songObj
     const diff = match.difficulty;
     const auto = match.auto;
-    const chart = NLM.Chart.generate(song, diff);
+    const chart = match.tutorial ? NLM.Tutorial.chart() : practice ? practiceChart(NLM.Chart.generate(NLM.Songs.get(practice.songId), diff), practice, song) : NLM.Chart.generate(song, diff);
+    // 練習：区間の2秒前から始める（その前の3秒はカウントダウン中に流れる）
+    const t0 = practice ? Math.max(0, practice.from / practice.rate - 2) : 0;
     const Judge = NLM.Judge;
     const st = me.st;
     const ses = Judge.createSession(chart, st, { auto });
@@ -1698,7 +2003,12 @@
       el('div', { class: 'ov-bar' }, [overlayBar]),
     ]);
     const cutEl = el('div', { class: 'cutin' });
-    const laneWrap = el('div', { class: 'lane-wrap' }, [canvas, cutEl, warnEl, deadEl, overlay]);
+    // チュートリアルの説明文（レーンの上の方に出す）
+    const capEl = el('div', { class: 'tut-cap' });
+    capEl.hidden = true;
+    let capIdx = -1;
+    if (match.tutorial) st.meterMax = 24; // スキルゲージの説明のため、早めに溜まるように
+    const laneWrap = el('div', { class: 'lane-wrap' }, [canvas, capEl, cutEl, warnEl, deadEl, overlay]);
     // 判定・コンボは叩いた位置（レーンの上）に出すので、横の表示は使わない
     judgeEl.hidden = true;
     comboEl.hidden = true;
@@ -1767,7 +2077,10 @@
       while (logEl.childNodes.length > 3) logEl.lastChild.remove();
     }
 
-    const songTime = (ts) => AE.perfToAudio(ts) - when;
+    // タイミング調整（設定）：判定は jo 秒、表示は vo 秒ずらす
+    const jo = (Save.data.settings.judgeOffset || 0) / 1000;
+    const vo = (Save.data.settings.visualOffset || 0) / 1000;
+    const songTime = (ts) => AE.perfToAudio(ts) - when - jo;
 
     function showJudge(res) {
       judgeEl.textContent = JUDGE_TEXT[res];
@@ -1951,6 +2264,7 @@
       if (!evs.length) return;
       for (const e of evs) {
         if (e.type === 'judge') {
+          if (e.result === 'miss' && B.activeEffects(me, lastT).length) me.stats.missUnder++; // 振り返り：妨害中のミス
           // 判定とコンボは叩いたレーンの上に出す（監督の決定）
           // 文字が重なって読めなくならないよう、出すのは最新の1つだけ
           pops.length = 0;
@@ -1972,8 +2286,9 @@
         }
       }
       battleEvents(relay(B.onLocal(me, evs, lastT)));
-      updateHud();
+      hudDirty = true; // 画面の数字はまとめて次のフレームで書き換える（叩いた瞬間の処理を軽く）
     }
+    let hudDirty = false;
     const canPlay = () => !auto && when !== null && !ended && me.alive;
     function press(lane, ts) {
       if (down[lane]) return;
@@ -2372,12 +2687,11 @@
         g.arc(cx, jy, lw * (0.2 + k * (h.key ? 1.2 : 0.75) * big), 0, Math.PI * 2);
         g.stroke();
         if (h.res !== 'miss') {
-          const gr = g.createLinearGradient(0, jy, 0, jy - H * 0.35 * big);
-          gr.addColorStop(0, hexA(col.length === 7 ? col : '#ffffff', 0.55 * (1 - k)));
-          gr.addColorStop(1, hexA(col.length === 7 ? col : '#ffffff', 0));
-          g.fillStyle = gr;
+          // 光の筋：色ごとに1回だけ描いた絵を使い回す（毎回グラデーションを作らない）
           const ww = (h.lane < 0 ? W : lw) * (0.9 - k * 0.4);
-          g.fillRect(cx - ww / 2, jy - H * 0.35 * big, ww, H * 0.35 * big);
+          g.globalAlpha = 0.55 * (1 - k);
+          g.drawImage(columnGlow(col), cx - ww / 2, jy - H * 0.35 * big, ww, H * 0.35 * big);
+          g.globalAlpha = (1 - k) * 0.9;
           // 火花
           g.fillStyle = '#ffffff';
           for (let s = 0; s < 8; s++) {
@@ -2429,6 +2743,20 @@
       }
     }
     const nhOf = (H) => Math.max(10, H * 0.026);
+    const colCache = {};
+    function columnGlow(col) {
+      if (colCache[col]) return colCache[col];
+      const c = document.createElement('canvas');
+      c.width = 8;
+      c.height = 128;
+      const cg = c.getContext('2d');
+      const gr = cg.createLinearGradient(0, 128, 0, 0);
+      gr.addColorStop(0, hexA(col, 1));
+      gr.addColorStop(1, hexA(col, 0));
+      cg.fillStyle = gr;
+      cg.fillRect(0, 0, 8, 128);
+      return (colCache[col] = c);
+    }
 
     /* ---------- 0.5秒前の予告（誰から・何が来るか） ---------- */
     function updateWarn(t) {
@@ -2644,7 +2972,7 @@
         el('div', { class: 'hud-right' }, [
           el('div', { class: 'hud-info' }, [
             el('div', { class: 'hud-title', text: song.title }),
-            el('div', { class: 'hud-diff', text: `${diffName}　Lv ${chart.level}${match.songs.length > 1 ? `　${match.index + 1}/${match.songs.length}曲` : ''}${auto ? '　自動演奏' : ''}` }),
+            el('div', { class: 'hud-diff', text: `${diffName}　Lv ${chart.level}${match.songs.length > 1 ? `　${match.index + 1}/${match.songs.length}曲` : ''}${auto ? '　自動演奏' : ''}${practice ? `　練習：${practice.label} ${practice.rate}倍` : ''}` }),
           ]),
           multi ? el('div', { class: 'hud-jc' }, [judgeEl, comboEl]) : null,
           el('div', { class: 'hud-score-wrap' }, [el('div', { class: 'hud-label', text: 'SCORE' }), scoreEl]),
@@ -2683,7 +3011,7 @@
               Net.send({ t: 'ready', i: match.index, m: match.netId });
               return;
             }
-            begin(AE.now() + 3.2); // 3秒のカウントダウン
+            begin(AE.now() + 3.2 - t0); // 3秒のカウントダウン（練習は区間の手前から）
           })
           .catch((e) => {
             overlayText.textContent = '読み込みに失敗しました：' + e.message;
@@ -2695,8 +3023,8 @@
           }
           const t = now - when;
           lastT = t;
-          if (t < 0) {
-            const c = Math.ceil(-t);
+          if (t < t0) {
+            const c = Math.ceil(t0 - t);
             overlayText.textContent = String(c);
             if (c !== lastCount && c <= 3) {
               lastCount = c;
@@ -2706,11 +3034,31 @@
             overlay.hidden = true;
             AE.sfx('go');
           }
-          if (me.alive) handleEvents(ses.update(t));
+          if (me.alive) handleEvents(ses.update(t - jo));
+          if (match.tutorial) {
+            // 説明文：その場面になったら出し、次の説明まで出し続ける
+            const caps = NLM.Tutorial.captions;
+            let k = -1;
+            for (let i = 0; i < caps.length; i++) if (t >= caps[i].t) k = i;
+            if (k !== capIdx) {
+              capIdx = k;
+              capEl.hidden = k < 0;
+              if (k >= 0) {
+                capEl.replaceChildren(el('div', { class: 'tut-step', text: `${k + 1} / ${caps.length}` }), el('div', { class: 'tut-title', text: caps[k].title }), el('div', { class: 'tut-text', text: caps[k].text }));
+                capEl.classList.remove('show');
+                void capEl.offsetWidth;
+                capEl.classList.add('show');
+              }
+            }
+          }
+          if (hudDirty) {
+            hudDirty = false;
+            updateHud();
+          }
           battleEvents(relay(B.tick(t)));
           coopCheck(t);
           updateWarn(t);
-          draw(t);
+          draw(t - vo);
           if (performance.now() - plistAt > 100) {
             plistAt = performance.now();
             if (net) sendState();
@@ -2768,6 +3116,36 @@
     Session.charId = keepChar;
   }
 
+  /**
+   * 対戦後の振り返り（演争）：攻撃した・された回数などの注目の項目
+   */
+  function reviewBlock(B, me) {
+    const ps = B.players;
+    if (ps.length < 2) return null;
+    const top = (f) => {
+      let best = null;
+      for (const p of ps) if (f(p) > 0 && (!best || f(p) > f(best))) best = p;
+      return best;
+    };
+    const items = [];
+    const add = (label, p, val) => p && items.push(el('div', { class: 'rv-item', style: { '--c': p.char.color } }, [el('span', { class: 'rv-k', text: label }), el('img', { src: NLM.Characters.iconURL(p.char, 32), alt: '' }), el('span', { class: 'rv-name', text: p.name }), el('span', { class: 'rv-v', text: val })]));
+    const atk = top((p) => p.stats.attacksOut);
+    add('一番攻撃した', atk, atk && `のべ${atk.stats.attacksOut}人`);
+    const tgt = top((p) => p.stats.attacksIn);
+    add('一番狙われた', tgt, tgt && `${tgt.stats.attacksIn}回`);
+    const sk = top((p) => p.stats.skills);
+    add('スキルを一番使った', sk, sk && `${sk.stats.skills}回`);
+    if (me) {
+      const byIdx = Object.entries(me.stats.hitBy).sort((a, b) => b[1] - a[1])[0];
+      if (byIdx) add('あなたを一番攻撃した', ps[byIdx[0]], `${byIdx[1]}回`);
+      const toIdx = Object.entries(me.stats.hitTo).sort((a, b) => b[1] - a[1])[0];
+      if (toIdx) add('あなたが一番攻撃した', ps[toIdx[0]], `${toIdx[1]}回`);
+      if (me.stats.attacksIn) items.push(el('div', { class: 'rv-item rv-me' }, [el('span', { class: 'rv-k', text: 'あなたが受けた攻撃' }), el('span', { class: 'rv-v', text: `${me.stats.attacksIn}回（妨害中のミス ${me.stats.missUnder}回）` })]));
+    }
+    if (!items.length) items.push(el('div', { class: 'rv-item' }, [el('span', { class: 'rv-k', text: '今回は攻撃がありませんでした' })]));
+    return el('div', { class: 'review' }, [el('div', { class: 'rv-title', text: '振り返り' }), el('div', { class: 'rv-grid' }, items)]);
+  }
+
   /** 順位：フレンド対戦はホストが決めた順（全員の画面で同じ順位にする） */
   function rankingOf(match) {
     const B = match.battle;
@@ -2777,7 +3155,7 @@
 
   /** 記録：自己ベスト（独奏）と、解禁条件用の累計（試作曲・自動演奏は数えない） */
   function recordMatch(match) {
-    if (match.recorded || match.auto) return;
+    if (match.recorded || match.auto || match.practice || match.tutorial) return; // 練習・チュートリアルは記録しない
     match.recorded = true;
     const B = match.battle;
     const me = B.players.find((p) => p.local);
@@ -2788,8 +3166,17 @@
       const diff = match.difficulty;
       const b = (Save.data.bests[sid] = Save.data.bests[sid] || {});
       const cur = b[diff] || { score: 0, maxCombo: 0, perfect: 0 };
-      match.newBest = { score: st.score > cur.score, maxCombo: st.maxCombo > cur.maxCombo, perfect: st.counts.perfect > cur.perfect };
-      b[diff] = { score: Math.max(cur.score, st.score), maxCombo: Math.max(cur.maxCombo, st.maxCombo), perfect: Math.max(cur.perfect, st.counts.perfect) };
+      const rk = NLM.Judge.rankOf(st);
+      const bestRank = NLM.Judge.betterRank(cur.rank, rk.rank);
+      match.newBest = { score: st.score > cur.score, maxCombo: st.maxCombo > cur.maxCombo, perfect: st.counts.perfect > cur.perfect, rank: bestRank !== cur.rank };
+      b[diff] = {
+        score: Math.max(cur.score, st.score),
+        maxCombo: Math.max(cur.maxCombo, st.maxCombo),
+        perfect: Math.max(cur.perfect, st.counts.perfect),
+        rank: bestRank,
+        fc: !!(cur.fc || rk.fc),
+        ap: !!(cur.ap || rk.ap),
+      };
     }
     const real = match.played.filter((id) => !NLM.Songs.get(id).proto).length;
     if (real) {
@@ -2867,7 +3254,7 @@
         return el('div', { class: 'lv-box', style: { '--c': DIFF_COLORS[i] } }, [
           el('div', { class: 'lv-name', text: d.name }),
           el('div', { class: 'lv-num', text: ch.level }),
-          el('div', { class: 'lv-best', text: b ? `ベスト ${b.score.toLocaleString()}` : 'ベスト －' }),
+          el('div', { class: 'lv-best' }, [b ? `ベスト ${b.score.toLocaleString()}` : 'ベスト －', rankChip(b)]),
           el('div', { class: 'lv-sub', text: b ? `最大コンボ ${b.maxCombo}　P ${b.perfect}` : `ノーツ ${ch.stats.count}` }),
         ]);
       });
@@ -2986,7 +3373,16 @@
       startMatch(match.songs.slice(), match.difficulty);
     };
     let foot;
-    if (match.net) {
+    if (match.tutorial) {
+      foot = [button('もう一度', () => startTutorial(), { variant: 'primary', className: 'btn-next' }), button('メニューへ', () => Nav.reset('menu'), { variant: 'sub' })];
+    } else if (match.practice) {
+      const pr = match.practice;
+      foot = [
+        button('もう一度', () => startPractice({ songId: pr.songId, difficulty: match.difficulty, from: pr.from, to: pr.to, rate: pr.rate, label: pr.label }), { variant: 'primary', className: 'btn-next' }),
+        button('練習の設定へ', () => Nav.goWithStack([{ id: 'menu' }, { id: 'charSelect' }, { id: 'songSelect' }, { id: 'diffSelect' }], 'practice'), { variant: 'sub' }),
+        button('メニューへ', () => Nav.reset('menu'), { variant: 'sub' }),
+      ];
+    } else if (match.net) {
       // フレンド対戦：次へ進めるのはホスト。ゲストはホストの操作を待つ
       const R = NLM.Room;
       const leave = button('部屋を抜ける', confirmLeave, { variant: 'sub' });
@@ -3023,6 +3419,7 @@
       const win = ranks[0].p;
       winner = win;
       body = el('div', { class: 'result result-battle' }, [
+        reviewBlock(B, me),
         el('div', { class: 'res-song', text: `${match.songs.map((id) => NLM.Songs.get(id).title).join(' → ')}　${d.name}` }),
         el('div', { class: 'res-winner' }, [
           winCv,
@@ -3069,12 +3466,13 @@
         ),
       ]);
     } else {
-      const status = match.auto ? '自動演奏（記録なし）' : st.gameOver ? 'GAME OVER' : 'CLEAR';
+      const status = match.tutorial ? 'チュートリアル完了！' : match.auto ? '自動演奏（記録なし）' : match.practice ? `練習：${match.practice.label} ${match.practice.rate}倍（記録なし）` : st.gameOver ? 'GAME OVER' : 'CLEAR';
       body = el('div', { class: 'result' }, [
         el('div', { class: 'res-song', text: `${song.title}　${d.name} Lv ${NLM.Chart.generate(song, match.difficulty).level}` }),
         el('div', { class: 'res-head' }, [
           el('img', { class: 'res-char', src: Chars.iconURL(me.char, 96, st.gameOver ? 'lose' : 'win'), alt: '' }),
           el('div', { class: 'res-status ' + (st.gameOver ? 'is-over' : 'is-clear'), text: status }),
+          match.auto ? null : rankBadge(NLM.Judge.rankOf(st), nb.rank),
         ]),
         el('div', { class: 'res-score' }, [el('span', { class: 'res-k', text: 'SCORE' }), el('span', { class: 'res-big', text: st.score.toLocaleString() }), nb.score ? el('span', { class: 'res-new', text: '自己ベスト更新！' }) : null]),
         el('div', { class: 'res-grid' }, [

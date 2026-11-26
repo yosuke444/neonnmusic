@@ -2952,3 +2952,237 @@ body {
 .room-name {
   min-width: 0;
 }
+
+/* 設定：項目が増えたのでスクロールできるように */
+.settings-scroll {
+  max-height: 100%;
+  overflow-y: auto;
+}
+.set-row-wide {
+  grid-template-columns: minmax(7.5em, 1.1fr) 5.6fr !important;
+}
+.set-row-wide .toggles {
+  grid-column: 2 / -1;
+}
+.set-hint {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: calc(var(--fs-body) * 0.8);
+}
+
+/* タイミング調整 */
+.calib {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(100%, 700px);
+  text-align: center;
+  font-size: var(--fs-body);
+}
+.calib-pad {
+  --ph: 0;
+  position: relative;
+  width: min(60vmin, 320px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 4px solid var(--neon-cyan);
+  background: radial-gradient(circle, rgba(45, 226, 230, calc(0.15 + var(--ph) * 0.6)), rgba(6, 4, 18, 0.85) 70%);
+  box-shadow: 0 0 calc(10px + var(--ph) * 40px) var(--neon-cyan);
+  touch-action: none;
+  cursor: pointer;
+}
+.calib-dot {
+  position: absolute;
+  inset: 38%;
+  border-radius: 50%;
+  background: #fff;
+  opacity: calc(0.3 + var(--ph) * 0.7);
+}
+.calib-pad.hit .calib-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 4px solid var(--neon-yellow);
+  animation: calib-hit 0.3s ease-out forwards;
+}
+@keyframes calib-hit {
+  to {
+    transform: scale(1.3);
+    opacity: 0;
+  }
+}
+.calib-result {
+  color: var(--neon-yellow);
+  min-height: 1.4em;
+}
+.calib-cur {
+  color: var(--text-dim);
+}
+
+/* ランク */
+.rank-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.rank-letter {
+  font: 900 clamp(56px, 12vmin, 120px) / 1 'Russo One', 'Orbitron', sans-serif;
+  color: #fff;
+  text-shadow: 0 0 10px var(--rc), 0 0 30px var(--rc), 0 0 60px var(--rc);
+  animation: rank-in 0.6s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+@keyframes rank-in {
+  from {
+    transform: scale(2.4) rotate(-12deg);
+    opacity: 0;
+  }
+}
+.r-S {
+  --rc: #ffe94a;
+}
+.r-A {
+  --rc: #ff3ea5;
+}
+.r-B {
+  --rc: #2de2e6;
+}
+.r-C {
+  --rc: #5dff8f;
+}
+.r-D {
+  --rc: #9aa0b8;
+}
+.rank-mark {
+  font: 900 clamp(13px, 2vmin + 6px, 22px) / 1 'Russo One', sans-serif;
+  letter-spacing: 0.08em;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+.rank-mark.is-fc {
+  color: #fff;
+  background: linear-gradient(90deg, #2de2e6, #b26bff);
+  box-shadow: 0 0 12px #2de2e6;
+}
+.rank-mark.is-ap {
+  color: #1a1200;
+  background: linear-gradient(90deg, #fff6a0, #ffe94a, #ffb13a);
+  box-shadow: 0 0 16px #ffe94a;
+}
+.rank-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 2px solid var(--rc);
+  color: var(--rc);
+  font: 900 1em/1.2 'Russo One', sans-serif;
+  text-shadow: 0 0 6px var(--rc);
+}
+.rank-chip i {
+  font-style: normal;
+  font-size: 0.65em;
+  color: #fff;
+}
+.btn-diff2 .rank-chip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  margin: 0;
+}
+.btn-diff2 {
+  position: relative;
+}
+.practice-panel .set-row-wide .toggles {
+  flex-wrap: wrap;
+}
+
+/* 対戦後の振り返り */
+.review {
+  order: 9;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rv-title {
+  font-size: calc(var(--fs-body) * 0.95);
+  color: var(--neon-cyan);
+  text-shadow: 0 0 8px rgba(45, 226, 230, 0.6);
+}
+.rv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 4px;
+}
+.rv-item {
+  --c: var(--neon-purple);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-left: 4px solid var(--c);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: calc(var(--fs-body) * 0.85);
+}
+.rv-item img {
+  width: 26px;
+  height: 26px;
+}
+.rv-k {
+  color: var(--text-dim);
+}
+.rv-name {
+  color: #fff;
+}
+.rv-v {
+  margin-left: auto;
+  color: var(--neon-yellow);
+}
+.rv-me {
+  border-color: var(--neon-yellow);
+}
+
+/* チュートリアル */
+.btn-mode-tut {
+  min-height: 0 !important;
+}
+.menu-modes .btn-mode-tut {
+  grid-column: 1 / -1;
+  font-size: clamp(18px, 2.4vmin + 8px, 30px);
+  padding: 0.4em;
+}
+.tut-cap {
+  position: absolute;
+  left: 3%;
+  right: 3%;
+  top: 2%;
+  z-index: 3;
+  padding: 8px 12px;
+  border: 3px solid var(--neon-green);
+  border-radius: 12px;
+  background: rgba(4, 18, 10, 0.88);
+  box-shadow: 0 0 16px rgba(93, 255, 143, 0.5);
+  pointer-events: none;
+}
+.tut-cap.show {
+  animation: card-in 0.4s cubic-bezier(0.2, 1.5, 0.4, 1);
+}
+.tut-step {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.tut-title {
+  font-size: clamp(18px, 3vmin + 8px, 32px);
+  font-weight: 900;
+  color: var(--neon-green);
+  text-shadow: 0 0 8px rgba(93, 255, 143, 0.7);
+}
+.tut-text {
+  font-size: clamp(13px, 1.8vmin + 7px, 20px);
+  color: #fff;
+}
