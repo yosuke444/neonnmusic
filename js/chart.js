@@ -79,6 +79,10 @@
     if (has('ハードスタイル') || has('ハードコア') || has('ビッグルーム')) [drop, drop2] = ['melody', 'chord'];
     if (has('ディスコ') || has('ファンク') || has('ハウス')) [drop, drop2] = ['bass', 'melody'];
     if (has('シンセウェイヴ')) [drop, drop2] = ['melody', 'stream'];
+    if (has('シティポップ') || has('AOR')) [drop, drop2] = ['chord', 'bass'];
+    if (has('ジャズ') || has('スウィング')) [drop, drop2] = ['melody', 'chord'];
+    if (has('サイバー') || has('インダストリアル') || has('ミッドテンポ')) [drop, drop2] = ['drums', 'bass'];
+    if (has('ラテン') || has('サンバ') || has('サルサ')) [drop, drop2] = ['drums', 'stream'];
     // 曲ごとに、ドロップ以外の区間の性格も変える（主役の性格を多めに使う）
     if (R() < 0.35) drop2 = drop;
     return {
@@ -96,7 +100,7 @@
     if (!p || e.part === 'roll' || e.part === 'crash' || e.part === 'fx') return null;
     if (p.type === 'drum') {
       if (/kick/.test(e.part)) return 'kick';
-      if (/snare|clap|tom/.test(e.part)) return 'snare';
+      if (/snare|clap|tom|rim|snap|conga|brush/.test(e.part)) return 'snare';
       if (/hat|shaker|ride/.test(e.part)) return 'hat';
       return null;
     }
@@ -115,7 +119,8 @@
       if (!role) continue;
       const k = Math.round(e.beat * 48);
       let o = map.get(k);
-      if (!o) map.set(k, (o = { key: k, beat: k / 48, roles: new Set(), pitch: {}, dur: {}, vel: 0 }));
+      // gbeat：はねる前の位置（スウィングの曲でも譜面のマス目で選べるように）
+      if (!o) map.set(k, (o = { key: k, beat: k / 48, gbeat: e.g !== undefined ? Math.round(e.g * 48) / 48 : k / 48, roles: new Set(), pitch: {}, dur: {}, vel: 0 }));
       const r = role === 'lead2' ? 'lead' : role;
       o.roles.add(r);
       o.vel = Math.max(o.vel, e.vel || 0.8);
@@ -175,7 +180,7 @@
     /* 1) 候補の重要度（性格ごとの重み＋拍の強さ＋曲ごとの小さな揺らぎ） */
     for (const o of all) {
       const sc = secOf(o.beat);
-      const pos = o.beat - sc.a;
+      const pos = o.gbeat - sc.a;
       let w = 0;
       for (const r of o.roles) w = Math.max(w, sc.st.w[r] || 0);
       w += o.roles.size * 0.6;
@@ -199,7 +204,7 @@
         const inSec = all.filter((o) => o.sec === sc && !inRoll(o.beat));
         const have = inSec.filter((o) => chosen.has(o));
         const gap = Math.min(D.minGap, D.grid * spb * 0.98);
-        const cands = inSec.filter((o) => !chosen.has(o) && onGrid(o.beat, D.grid) && (d === 'extra' || o.score > 1.2)).sort((x, y) => y.score - x.score);
+        const cands = inSec.filter((o) => !chosen.has(o) && onGrid(o.gbeat, D.grid) && (d === 'extra' || o.score > 1.2)).sort((x, y) => y.score - x.score);
         let n = have.length;
         const times = have.map((o) => o.beat * spb).sort((x, y) => x - y);
         for (const o of cands) {
@@ -386,8 +391,8 @@
       // ドラムセット型：キック・スネア・ハイハットを決まったレーンに（小節ごとに交互）
       const bar = Math.floor((o.beat - sc.a) / 4);
       if (o.roles.has('snare')) lane = kit.snare[bar % 2];
-      else if (o.roles.has('kick')) lane = kit.kick[Math.round(o.beat) % 2];
-      else if (o.roles.has('hat')) lane = kit.hat[Math.round(o.beat * 4) % 2];
+      else if (o.roles.has('kick')) lane = kit.kick[Math.round(o.gbeat) % 2];
+      else if (o.roles.has('hat')) lane = kit.hat[Math.round(o.gbeat * 4) % 2];
       else lane = kit.kick[1];
       lane = M(lane);
     } else if (st.lanes === 'stairs') {

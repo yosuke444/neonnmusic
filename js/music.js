@@ -32,6 +32,14 @@
  * コード記号は「キーの根音から見た度数」をローマ数字で書く。
  *   大文字＝長三和音、小文字＝短三和音、b/# で半音上下（短調の ♭六 は 'bVI'）。
  *   末尾：7 maj7 9 maj9 add9 6 sus2 sus4 7sus4 dim aug
+ *         ジャズ系：7b5（小文字でハーフディミニッシュ）dim7 11 13 69 7b9 7#9 maj7#11　ロック：5（パワーコード）
+ * 【ジャズ系の書き方】
+ *   swing8: 0〜1   8分の裏を後ろにずらす（1で3連符のはね）。swing は16分のはね。
+ *   ベースの記号 < > ：次のコードの根音の半音下・半音上（ウォーキングベースの経過音）
+ *   ベースの記号 2 b3 b7 b9：根音から見た音程
+ * 【自由な構成】free: true … 企画書の構成（イントロ→ビルド→ドロップ…）を土台にしつつ自由に並べる（監督の決定）。
+ *   区間の impact: false … ドロップの1拍目の衝撃音・クラッシュを鳴らさない（決め所のキーノーツは残す）。'crash' … クラッシュだけ鳴らす。
+ *   type:'build' でも build:true を付けなければ、スネア連打・上昇音・無音は入らない（歌ものの「Bメロ」など）。
  * ========================================================= */
 (function () {
   'use strict';
@@ -82,23 +90,40 @@
       '7sus4': [0, 5, 7, 10],
       dim: [0, 3, 6],
       aug: [0, 4, 8],
+      '7b5': [0, t, 6, 10],
+      dim7: [0, 3, 6, 9],
+      11: [0, t, 7, 10, 14, 17],
+      13: [0, t, 7, 10, 14, 21],
+      69: [0, t, 7, 9, 14],
+      '7b9': [0, t, 7, 10, 13],
+      '7#9': [0, t, 7, 10, 15],
+      'maj7#11': [0, t, 7, 11, 18],
+      5: [0, 7, 12], // パワーコード（ロックのギター）
     };
     const intervals = TABLE[suf];
     if (!intervals) throw new Error('コードの種類が読めません: ' + sym);
-    const kanji = (acc < 0 ? '♭' : acc > 0 ? '♯' : '') + KANJI[up] + (minor && suf !== 'dim' ? 'm' : '') + suf;
+    const noM = suf === 'dim' || suf === 'dim7';
+    const kanji = (acc < 0 ? '♭' : acc > 0 ? '♯' : '') + KANJI[up] + (minor && !noM ? 'm' : '') + suf;
     return {
       sym,
       rootPc,
       intervals,
       pcs: [...new Set(intervals.map((i) => mod12(rootPc + i)))],
       kanji,
-      name: NAMES[rootPc] + (minor ? 'm' : '') + suf,
+      name: NAMES[rootPc] + (minor && !noM ? 'm' : '') + suf,
     };
   }
 
   /** ベースの記号（1 3 5 7 8 9 など）→ MIDI番号 */
-  function bassNote(tok, chord, base) {
+  function bassNote(tok, chord, base, next) {
     const root = base + mod12(chord.rootPc - base);
+    if ((tok === '<' || tok === '>') && next) {
+      // 次のコードの根音へ半音でつなぐ（今の根音に近い高さを選ぶ）
+      let n = base + mod12(next.rootPc - base) + (tok === '<' ? -1 : 1);
+      if (n - root > 7) n -= 12;
+      if (root - n > 7) n += 12;
+      return n;
+    }
     const iv = chord.intervals;
     const has = (x) => iv.includes(x);
     switch (tok) {
@@ -118,6 +143,14 @@
         return root + 5;
       case '6':
         return root + 9;
+      case '2':
+        return root + 2;
+      case 'b3':
+        return root + 3;
+      case 'b7':
+        return root + 10;
+      case 'b9':
+        return root + 13;
       default:
         return null;
     }
@@ -173,7 +206,7 @@
     return { tokens, div, beats: tokens.length / div };
   }
 
-  const DRUM_PARTS = ['kick', 'snare', 'clap', 'hat', 'ohat', 'crash', 'ride', 'perc', 'tom', 'rim', 'roll', 'shaker'];
+  const DRUM_PARTS = ['kick', 'snare', 'clap', 'hat', 'ohat', 'crash', 'ride', 'perc', 'tom', 'rim', 'roll', 'shaker', 'brush', 'snap', 'conga'];
   function partType(name, inst) {
     if (inst && inst.type) return inst.type;
     if (DRUM_PARTS.includes(name)) return 'drum';
@@ -237,6 +270,15 @@
         for (const x of secChords) if (x.beat <= b + 1e-6) c = x;
         return c.chord;
       };
+      // 次のコード（区間の最後なら、次の区間の最初のコード）
+      const nextChordAfter = (b) => {
+        const x = secChords.find((y) => y.beat > b + 1e-6);
+        if (x) return x.chord;
+        const ni = song.sections.indexOf(sec) + 1;
+        const ns = song.sections[ni];
+        if (!ns) return secChords[0].chord;
+        return parseChord((ns.prog || song.prog)[0], keyPc + (ns.transpose || 0));
+      };
 
       // パート
       for (const [part, spec] of Object.entries(sec.parts || {})) {
@@ -257,7 +299,10 @@
           pat.tokens.forEach((tok, i) => {
             let b = pos + i * stepB;
             if (b >= beats - 1e-6) return;
+            const g = start + b; // はねる前の位置（譜面のマス目に使う）
             if (song.swing && pat.div === 4 && i % 2 === 1) b += song.swing * stepB;
+            if (song.swing8 && pat.div === 4 && i % 4 === 2) b += song.swing8 / 6;
+            if (song.swing8 && pat.div === 4 && i % 4 === 3) b += song.swing8 / 12;
             const abs = start + b;
             if (tok === '-') {
               if (last) [].concat(last).forEach((e) => (e.dur += stepB));
@@ -269,7 +314,7 @@
             }
             if (type === 'drum') {
               const vel = tok === 'X' ? 1 : tok === 'o' ? 0.45 : 0.8;
-              events.push({ part, beat: abs, dur: stepB, vel, drum: true });
+              events.push({ part, beat: abs, g, dur: stepB, vel, drum: true });
               last = null;
               return;
             }
@@ -281,7 +326,7 @@
               const v = voiceChord(chord, inst.low || 55, inst.high || 76, prevVoicing);
               prevVoicing = v;
               last = v.map((m) => {
-                const e = { part, beat: abs, dur: stepB, midi: m + (inst.octave || 0) * 12, vel };
+                const e = { part, beat: abs, g, dur: stepB, midi: m + (inst.octave || 0) * 12, vel };
                 events.push(e);
                 return e;
               });
@@ -289,7 +334,7 @@
             }
             let midi = noteToMidi(t);
             if (midi !== null) midi += tr;
-            else if (type === 'bass') midi = bassNote(t, chord, inst.base || 28);
+            else if (type === 'bass') midi = bassNote(t, chord, inst.base || 28, nextChordAfter(abs));
             else if (type === 'arp') {
               const n = parseInt(t, 10);
               if (!isNaN(n)) {
@@ -300,7 +345,7 @@
               }
             }
             if (midi === null || midi === undefined) throw new Error(`読めない記号「${tok}」（パート ${part}・パターン ${pname}）`);
-            const e = { part, beat: abs, dur: stepB, midi: midi + (inst.octave || 0) * 12, vel };
+            const e = { part, beat: abs, g, dur: stepB, midi: midi + (inst.octave || 0) * 12, vel };
             events.push(e);
             last = e;
           });
@@ -337,8 +382,8 @@
       }
       // ドロップ：1拍目にクラッシュ＋衝撃音
       if (sec.drop) {
-        events.push({ part: 'crash', beat: start, dur: 1, vel: 1, drum: true });
-        events.push({ part: 'fx', beat: start, dur: 4, kind: 'impact', vel: 1 });
+        if (sec.impact !== false) events.push({ part: 'crash', beat: start, dur: 1, vel: 1, drum: true });
+        if (sec.impact !== false && sec.impact !== 'crash') events.push({ part: 'fx', beat: start, dur: 4, kind: 'impact', vel: 1 });
         accents.push({ beat: start, kind: 'drop' });
       }
       cursor += beats;
@@ -465,12 +510,13 @@
 
     // 5) 構成：8小節単位、基本形
     // 遅い曲（中くらい・短い形）は4小節の区間を認める（docs/song-plan.md）
-    const shortOK = song.form === 'mid' || song.form === 'short';
+    const shortOK = song.form === 'mid' || song.form === 'short' || song.free;
     const odd = c.sections.filter((s) => s.bars % 8 !== 0 && !(shortOK && s.bars % 4 === 0));
     add(odd.length ? 'warn' : 'ok', '構成', odd.length ? `8小節単位でない区間：${odd.map((s) => s.name).join('、')}` : shortOK ? '8小節単位（遅い曲のため一部4小節）' : 'すべて8小節単位');
     const typeSeq = c.sections.map((s) => s.type).filter((t, i, a) => t !== a[i - 1]);
     const basic = ['intro', 'build', 'drop', 'break', 'build', 'drop', 'outro'];
-    add(typeSeq.join() === basic.join() ? 'ok' : 'warn', '構成', `流れ：${typeSeq.map((t) => TYPE_JA[t] || t).join('→')}`);
+    const flowOk = typeSeq.join() === basic.join() || (song.free && typeSeq.includes('drop'));
+    add(flowOk ? 'ok' : 'warn', '構成', `流れ：${c.sections.map((s) => s.name).join('→')}${song.free ? '（自由な構成）' : ''}`);
 
     // 6) ドロップの主旋律「同じ・同じ・同じ・変化」
     for (const s of c.sections.filter((x) => x.type === 'drop')) {
@@ -482,10 +528,11 @@
       // パターン名を出てきた順に A B C … に置き換えて表示
       const letter = {};
       const short = seq.map((n) => (letter[n] = letter[n] || String.fromCharCode(65 + Object.keys(letter).length)));
-      add(ok ? 'ok' : 'warn', '主旋律', `${s.name}：${short.join(' ') || '（主旋律なし）'}${ok ? '' : '　→「同じ・同じ・同じ・変化」になっていない'}`);
+      if (song.free) add('ok', '主旋律', `${s.name}：${short.join(' ') || '（主旋律なし）'}（自由な構成のため並びは問わない）`);
+      else add(ok ? 'ok' : 'warn', '主旋律', `${s.name}：${short.join(' ') || '（主旋律なし）'}${ok ? '' : '　→「同じ・同じ・同じ・変化」になっていない'}`);
       // 1拍目にキック・クラッシュ・ベース・リード
       const at0 = new Set(c.events.filter((e) => Math.abs(e.beat - s.startBeat) < 1e-6).map((e) => c.parts[e.part].type === 'bass' ? 'bass' : e.part));
-      const need = ['kick', 'crash', 'bass', lead];
+      const need = s.flags.impact === false ? ['bass', lead] : ['kick', 'crash', 'bass', lead];
       const miss = need.filter((n) => !at0.has(n));
       add(miss.length ? 'warn' : 'ok', 'ドロップ', `${s.name}の1拍目：${miss.length ? miss.join('・') + ' が鳴っていない' : 'キック・クラッシュ・ベース・リードが同時'}`);
     }
@@ -495,6 +542,10 @@
       const f = s.flags;
       const gap = f.gap === undefined ? 1 : f.gap;
       const ok = f.build && gap >= 0.5 && gap <= 1;
+      if (song.free && !f.build) {
+        add('ok', 'ビルド', `${s.name}：連打・上昇音なし（自由な構成）`);
+        continue;
+      }
       add(ok ? 'ok' : 'warn', 'ビルド', `${s.name}：スネア連打${f.build ? '○' : '×'} 上昇音${f.build ? '○' : '×'} フィルター${f.build ? '○' : '×'} 無音${gap}拍`);
     }
 

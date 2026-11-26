@@ -558,6 +558,157 @@
       });
     },
 
+    /* ---------- ジャズ・ファンク系（エレピ・オルガン・サックス・ホーン・ギター） ---------- */
+    // エレピ：FM合成。弾いた瞬間の「ガツッ」とした響き（bark）＋高い金属音（tine）、ゆっくり消える
+    epiano(ctx, out, t, dur, midi, vel, inst) {
+      const f = hz(midi);
+      const amp = ctx.createGain();
+      amp.connect(out);
+      const dec = inst.decay || 1.6;
+      const pk = vel * 0.3;
+      amp.gain.setValueAtTime(0.0001, t);
+      amp.gain.linearRampToValueAtTime(pk, t + 0.004);
+      amp.gain.setTargetAtTime(pk * 0.2, t + 0.004, dec / 2.5);
+      const off = t + Math.max(dur, 0.05);
+      amp.gain.setTargetAtTime(0.0001, off, 0.08);
+      const end = off + 0.4;
+      const car = osc(ctx, 'sine', f, t, end);
+      const mod = osc(ctx, 'sine', f, t, end);
+      if (inst.warble) {
+        // テープの揺れ（ヴェイパーウェイヴ）：音程がゆっくり揺れる
+        const w = gainNode(ctx, inst.warble);
+        osc(ctx, 'sine', 0.6, t, end).connect(w);
+        w.connect(car.detune);
+        w.connect(mod.detune);
+      }
+      const idx = ctx.createGain();
+      idx.gain.setValueAtTime(f * (inst.bark || 1.3), t);
+      idx.gain.setTargetAtTime(f * 0.1, t, 0.2);
+      mod.connect(idx).connect(car.frequency);
+      const tg = ctx.createGain();
+      tg.gain.setValueAtTime(0.05, t);
+      tg.gain.exponentialRampToValueAtTime(0.0005, t + 0.09);
+      osc(ctx, 'sine', f * 14, t, t + 0.1).connect(tg).connect(amp);
+      if (inst.trem) {
+        // 音量の揺れ（トレモロ）
+        const tr = gainNode(ctx, 1);
+        osc(ctx, 'sine', inst.trem, t, end).connect(gainNode(ctx, 0.25)).connect(tr.gain);
+        car.connect(tr).connect(amp);
+      } else car.connect(amp);
+    },
+    // オルガン：サイン波を倍音の位置に重ねる（ドローバー）＋揺れ＋鍵盤のクリック音
+    organ(ctx, out, t, dur, midi, vel, inst) {
+      const f = hz(midi);
+      const amp = ctx.createGain();
+      amp.connect(out);
+      const end = adsr(amp.gain, t, dur, 0.006, 0.05, 1, 0.06, vel * 0.08);
+      const bars = inst.bars || [0.8, 1, 0.6, 0.5, 0, 0.3];
+      const ratios = [0.5, 1, 1.5, 2, 3, 4];
+      const vd = gainNode(ctx, inst.vib === undefined ? 7 : inst.vib);
+      osc(ctx, 'sine', 6.2, t, end).connect(vd);
+      bars.forEach((b, k) => {
+        if (!b) return;
+        const o = osc(ctx, 'sine', f * ratios[k], t, end);
+        vd.connect(o.detune);
+        o.connect(gainNode(ctx, b)).connect(amp);
+      });
+      const cg = ctx.createGain();
+      cg.connect(out);
+      hitEnv(cg.gain, t, vel * 0.04, 0.012);
+      noise(ctx, t, t + 0.02).connect(filter(ctx, 'bandpass', 3000, 1)).connect(cg);
+    },
+    // サックス風のリード：のこぎり波＋矩形波、息の音、出だしの音程のしゃくり、遅れてかかる揺れ
+    sax(ctx, out, t, dur, midi, vel, inst) {
+      const f = hz(midi);
+      const amp = ctx.createGain();
+      amp.connect(out);
+      const end = adsr(amp.gain, t, dur, 0.03, 0.2, 0.85, 0.09, vel * 0.3);
+      const cut = inst.cutoff || 2400;
+      const flt = filter(ctx, 'lowpass', cut * 0.35, 1.4);
+      flt.frequency.setValueAtTime(cut * 0.35, t);
+      flt.frequency.linearRampToValueAtTime(cut, t + 0.07);
+      const o1 = osc(ctx, 'sawtooth', f, t, end);
+      const o2 = osc(ctx, 'square', f, t, end, 5);
+      o1.detune.setValueAtTime(-50, t);
+      o1.detune.linearRampToValueAtTime(0, t + 0.05);
+      const lg = ctx.createGain();
+      lg.gain.setValueAtTime(0, t);
+      lg.gain.setValueAtTime(0, t + 0.18);
+      lg.gain.linearRampToValueAtTime(inst.vibrato || 16, t + 0.45);
+      osc(ctx, 'sine', 5.4, t, end).connect(lg);
+      lg.connect(o1.detune);
+      lg.connect(o2.detune);
+      o1.connect(flt);
+      o2.connect(gainNode(ctx, 0.45)).connect(flt);
+      const body = filter(ctx, 'peaking', 1300, 1.2);
+      body.gain.value = 6;
+      flt.connect(body).connect(amp);
+      const bg = gainNode(ctx, 0.05);
+      bg.connect(amp);
+      noise(ctx, t, end).connect(filter(ctx, 'bandpass', 2200, 1.5)).connect(bg);
+    },
+    // ホーン（金管の和音）：フィルターが一瞬で開いて少し閉じる
+    horn(ctx, out, t, dur, midi, vel, inst) {
+      const f = hz(midi);
+      const amp = ctx.createGain();
+      amp.connect(out);
+      const end = adsr(amp.gain, t, dur, 0.018, 0.15, 0.7, 0.08, vel * 0.11);
+      const cut = inst.cutoff || 3200;
+      const flt = filter(ctx, 'lowpass', 400, 1);
+      flt.frequency.setValueAtTime(400, t);
+      flt.frequency.linearRampToValueAtTime(cut, t + 0.04);
+      flt.frequency.setTargetAtTime(cut * 0.6, t + 0.05, 0.15);
+      osc(ctx, 'sawtooth', f, t, end, -6).connect(flt);
+      osc(ctx, 'sawtooth', f, t, end, 6).connect(flt);
+      flt.connect(amp);
+    },
+    // ギター（ファンクのカッティング）：mute:true で短く詰まった音
+    gtr(ctx, out, t, dur, midi, vel, inst) {
+      const f = hz(midi);
+      const amp = ctx.createGain();
+      amp.connect(out);
+      const end = adsr(amp.gain, t, Math.min(dur, inst.mute ? 0.06 : 0.6), 0.002, 0.12, inst.mute ? 0 : 0.35, 0.06, vel * 0.2);
+      const lp = filter(ctx, 'lowpass', 6000, 0.7);
+      lp.frequency.setTargetAtTime(1800, t, 0.05);
+      osc(ctx, 'sawtooth', f, t, end).connect(lp);
+      osc(ctx, 'square', f * 2, t, end, 3).connect(gainNode(ctx, 0.25)).connect(lp);
+      if (inst.drive) {
+        // 歪んだギター（ロック）：波形をつぶして、こもらないよう高めの帯域を残す
+        const sh = ctx.createWaveShaper();
+        sh.curve = drive(ctx, inst.drive);
+        lp.frequency.cancelScheduledValues(t);
+        lp.frequency.setValueAtTime(inst.tone ? inst.tone * 2 : 3200, t);
+        lp.connect(sh).connect(filter(ctx, 'lowpass', 4200, 0.8)).connect(gainNode(ctx, 0.45)).connect(amp);
+        return;
+      }
+      lp.connect(filter(ctx, 'bandpass', inst.tone || 1600, 0.9)).connect(amp);
+      lp.connect(gainNode(ctx, 0.4)).connect(amp);
+    },
+    // ウッドベース・指弾きのベース（ウォーキングベース向け）：弾いた瞬間が強く、すぐ落ち着く
+    wbass(ctx, out, t, dur, midi, vel, inst) {
+      const f = hz(midi);
+      const amp = ctx.createGain();
+      amp.connect(out);
+      const pk = vel * 0.5;
+      amp.gain.setValueAtTime(0.0001, t);
+      amp.gain.linearRampToValueAtTime(pk, t + 0.006);
+      amp.gain.setTargetAtTime(pk * 0.4, t + 0.006, 0.12);
+      const off = t + Math.max(dur * 0.92, 0.06);
+      amp.gain.setTargetAtTime(0.0001, off, 0.03);
+      const end = off + 0.15;
+      const cut = inst.cutoff || 900;
+      const flt = filter(ctx, 'lowpass', cut * 2.2, 1.2);
+      flt.frequency.setTargetAtTime(cut, t, 0.06);
+      osc(ctx, 'triangle', f, t, end).connect(flt);
+      osc(ctx, 'sawtooth', f, t, end).connect(gainNode(ctx, 0.22)).connect(flt);
+      flt.connect(amp);
+      osc(ctx, 'sine', f, t, end).connect(gainNode(ctx, 0.6)).connect(amp);
+      const pg = ctx.createGain();
+      pg.connect(out);
+      hitEnv(pg.gain, t, vel * 0.1, 0.03);
+      noise(ctx, t, t + 0.04).connect(filter(ctx, 'lowpass', 1200)).connect(pg);
+    },
+
     /* ---------- ベース ---------- */
     // 跳ねるベース（フューチャーハウス）：フィルターの開閉＋同じ高さのサイン波
     fhbass(ctx, out, t, dur, midi, vel, inst) {
@@ -775,6 +926,65 @@
       o.frequency.setValueAtTime(f, t);
       o.frequency.exponentialRampToValueAtTime(f * 0.6, t + 0.15);
       o.connect(g);
+    },
+
+    // ライドシンバル（ジャズの刻み）：金属的な矩形波の重なり＋カップの「チーン」
+    ride(ctx, out, t, dur, midi, vel, inst) {
+      const g = ctx.createGain();
+      g.connect(out);
+      const end = hitEnv(g.gain, t, vel * 0.12, inst.decay || 0.9);
+      const bp = filter(ctx, 'bandpass', inst.tone || 5200, 0.8);
+      [263, 400, 421, 474, 587, 845].forEach((fr) => osc(ctx, 'square', fr * 2.1, t, end).connect(bp));
+      bp.connect(filter(ctx, 'highpass', 3000, 0.7)).connect(g);
+      const b = ctx.createGain();
+      b.connect(out);
+      hitEnv(b.gain, t, vel * 0.05, 0.5);
+      osc(ctx, 'sine', inst.bell || 2950, t, t + 0.52).connect(b);
+    },
+    // ブラシ（スネアをこする音）
+    brush(ctx, out, t, dur, midi, vel, inst) {
+      const g = ctx.createGain();
+      g.connect(out);
+      const len = inst.decay || 0.18;
+      g.gain.setValueAtTime(0.0005, t);
+      g.gain.linearRampToValueAtTime(vel * 0.6, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0005, t + len);
+      noise(ctx, t, t + len + 0.02).connect(filter(ctx, 'bandpass', inst.tone || 3200, 0.6)).connect(g);
+    },
+    // リムショット（スネアのふち）
+    rim(ctx, out, t, dur, midi, vel) {
+      const g = ctx.createGain();
+      g.connect(out);
+      const end = hitEnv(g.gain, t, vel * 0.5, 0.05);
+      osc(ctx, 'triangle', 1750, t, end).connect(filter(ctx, 'highpass', 800)).connect(g);
+      const n = ctx.createGain();
+      n.connect(out);
+      hitEnv(n.gain, t, vel * 0.4, 0.02);
+      noise(ctx, t, t + 0.03).connect(filter(ctx, 'bandpass', 4000, 2)).connect(n);
+    },
+    // フィンガースナップ（指パッチン）
+    snap(ctx, out, t, dur, midi, vel) {
+      const g = ctx.createGain();
+      g.connect(out);
+      g.gain.setValueAtTime(0.0005, t);
+      g.gain.linearRampToValueAtTime(vel * 1.4, t + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0005, t + 0.09);
+      noise(ctx, t, t + 0.1).connect(filter(ctx, 'bandpass', 2600, 2.2)).connect(g);
+    },
+    // コンガ（ラテンの太鼓）：inst.freq で高さ
+    conga(ctx, out, t, dur, midi, vel, inst) {
+      const g = ctx.createGain();
+      g.connect(out);
+      const f = inst.freq || 330;
+      const end = hitEnv(g.gain, t, vel * 0.6, inst.decay || 0.18);
+      const o = osc(ctx, 'sine', f * 1.3, t, end);
+      o.frequency.setValueAtTime(f * 1.3, t);
+      o.frequency.exponentialRampToValueAtTime(f, t + 0.02);
+      o.connect(g);
+      const sl = ctx.createGain();
+      sl.connect(out);
+      hitEnv(sl.gain, t, vel * 0.15, 0.015);
+      noise(ctx, t, t + 0.02).connect(filter(ctx, 'bandpass', 2000, 1)).connect(sl);
     },
 
     /* ---------- 効果音（ビルドの上昇音・ドロップの衝撃音） ---------- */
@@ -1009,9 +1219,10 @@
     supersaw: 0.8, pluck: 0.8, pad: 2.4, bell: 3.6, pulse: 0.2, tri: 0.15, vox: 0.6, fhbass: 0.35, reese: 0.4, sub: 0.3,
     sawbass: 0.3, wobble: 0.3, b808: 1.0, hardkick: 0.6, acid: 0.2,
     kick: 0.45, chipKick: 0.2, snare: 0.3, chipSnare: 0.2, clap: 0.3, hat: 0.4, chipHat: 0.1, crash: 2.8, shaker: 0.15, tom: 0.3,
+    epiano: 0.5, organ: 0.2, sax: 0.4, horn: 0.4, gtr: 0.3, wbass: 0.2, ride: 1.2, brush: 0.2, rim: 0.1, snap: 0.15, conga: 0.25,
   };
   const STEREO_PRESETS = { supersaw: 1, pad: 1 };
-  const NOISY_PRESETS = { hat: 1, chipHat: 1, shaker: 1, snare: 1, chipSnare: 1, clap: 1 };
+  const NOISY_PRESETS = { hat: 1, chipHat: 1, shaker: 1, snare: 1, chipSnare: 1, clap: 1, brush: 1, snap: 1, rim: 1 };
 
   function assignNoteKeys(c) {
     const jobs = new Map();
