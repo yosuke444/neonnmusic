@@ -229,6 +229,7 @@
 
     for (const d of ORDER) {
       const D = DIFF[d];
+      const di = ORDER.indexOf(d);
       // その難易度で使うノーツ一覧（下の難易度から引き継ぐ）
       const occ = [[], [], [], []]; // レーンごとの {t, end}
       const live = [];
@@ -266,6 +267,7 @@
         if (others.some((x) => x.t > n.t && x.t <= end + D.jack)) continue;
         n.type = 'hold';
         n.end = end;
+        n.upAt = di; // この難易度で長押しに変えた
         const me = occ[n.lane].find((x) => x.t === n.t);
         if (me) me.end = end;
       }
@@ -284,7 +286,7 @@
           type = 'tap';
         }
         if (lane === undefined) continue;
-        const n = { id: counter++, t, beat: o.beat, lane, type, end: type === 'hold' ? end : undefined, key: false, chord: null, pitch: pitchOf(o), roles: o.roles };
+        const n = { id: counter++, t, beat: o.beat, lane, type, end: type === 'hold' ? end : undefined, key: false, chord: null, pitch: pitchOf(o), roles: o.roles, born: di, _o: o };
         noteOf.set(o, n);
         live.push(n);
         addOcc(n);
@@ -303,7 +305,7 @@
           if (handsAt(n.t) >= D.maxHand) break;
           const end = n.type === 'hold' ? n.end : 0;
           if (conflict(l, n.t, end)) continue;
-          const m = { id: counter++, t: n.t, beat: n.beat, lane: l, type: n.type, end: n.type === 'hold' ? n.end : undefined, key: false, chord: null };
+          const m = { id: counter++, t: n.t, beat: n.beat, lane: l, type: n.type, end: n.type === 'hold' ? n.end : undefined, key: false, chord: null, born: di, _o: o, partner: true };
           const list = partners.get(o) || [];
           list.push(m);
           partners.set(o, list);
@@ -317,9 +319,17 @@
         }
       }
 
+      // 指の数（監督の決定）：エクストラ以外は、長押し中の指も含めて同時に2つまで。エクストラは3つまで。
+      // 超えた時は、この難易度で足した音から外す（下の難易度の譜面はそのまま残す）
+      limitFingers(live, d === 'extra' ? 3 : 2, di, noteOf, partners, spb);
+
       // この難易度の譜面を書き出す（ノーツはコピー。長押しは終点の「離す」ノーツを付ける）
       const out = [];
-      for (const n of live) out.push(Object.assign({}, n, { roles: undefined, pitch: undefined, id: undefined }));
+      for (const n of live) out.push(Object.assign({}, n, { roles: undefined, pitch: undefined, id: undefined, born: undefined, _o: undefined, partner: undefined, upAt: undefined }));
+      // 相方がいなくなった同時押しの印を外す
+      const chordN = {};
+      out.forEach((n) => n.chord !== null && (chordN[n.chord] = (chordN[n.chord] || 0) + 1));
+      out.forEach((n) => n.chord !== null && chordN[n.chord] < 2 && (n.chord = null));
       // 連打（ビルドのスネア連打区間）
       for (const r of c.rolls) {
         const t = r.beat * spb;
@@ -363,6 +373,55 @@
       charts[d] = { songId: song.id, difficulty: d, level: manual || levelOf(stats, d), notes: results[d], stats, duration: c.duration, compiled: c, style: styleMap };
     }
     return charts;
+  }
+
+  /**
+   * 同時に押さえる指の数を cap 以下にする。数えるのは、その瞬間に始まるノーツと、押し続けている長押し。
+   * 外す順：この難易度で足した同時押しの相方 → この難易度で足した音（相方なし）→ この難易度で長押しにした音を短くする
+   *         → この難易度で足した音（相方ごと）
+   */
+  function limitFingers(live, cap, di, noteOf, partners, spb) {
+    const EPS = 1e-6;
+    const times = [...new Set(live.map((n) => n.t))].sort((a, b) => a - b);
+    const remove = (n) => {
+      const i = live.indexOf(n);
+      if (i >= 0) live.splice(i, 1);
+      if (n.partner) {
+        const list = partners.get(n._o);
+        if (list) list.splice(list.indexOf(n), 1);
+      } else if (n._o && noteOf.get(n._o) === n) {
+        noteOf.delete(n._o);
+        for (const m of partners.get(n._o) || []) {
+          const k = live.indexOf(m);
+          if (k >= 0) live.splice(k, 1);
+        }
+        partners.delete(n._o);
+      }
+    };
+    for (const T of times) {
+      for (let guard = 0; guard < 8; guard++) {
+        const starts = live.filter((n) => Math.abs(n.t - T) < EPS);
+        const holding = live.filter((n) => n.type === 'hold' && n.t < T - EPS && n.end > T - 0.05);
+        if (starts.length + holding.length <= cap) break;
+        const pick =
+          starts.find((n) => n.born === di && n.partner) ||
+          starts.find((n) => n.born === di && !n.partner && !n.key && !(partners.get(n._o) || []).length) ||
+          holding.find((n) => n.upAt === di || n.born === di);
+        if (pick && pick.type === 'hold' && holding.includes(pick)) {
+          // 長押しを手前で終わらせる（短すぎるなら通常ノーツに戻す）
+          const end = T - Math.max(0.12, spb * 0.5);
+          if (end - pick.t >= spb * 0.5) pick.end = end;
+          else {
+            pick.type = 'tap';
+            pick.end = undefined;
+          }
+          continue;
+        }
+        const victim = pick || starts.find((n) => n.born === di) || starts.find((n) => n.partner) || starts[starts.length - 1];
+        if (!victim) break;
+        remove(victim);
+      }
+    }
   }
 
   /** 長押しにする長さ（拍）。0＝長押しにしない */

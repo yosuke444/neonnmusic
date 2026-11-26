@@ -218,13 +218,19 @@
         n.stop(s + dur + 0.02);
       };
       switch (name) {
-        case 'tap': // 打鍵音：短く小さく
-          hiss('se', 5000, 0.025, 0.18);
-          tone('se', 'sine', 2100, 1500, 0.03, 0.07);
+        case 'tap': // 打鍵音：はっきり大きく「カッ」（監督の決定：大きく気持ちよく）
+          hiss('se', 1800, 0.045, 0.5);
+          tone('se', 'triangle', 1300, 650, 0.05, 0.3);
+          tone('se', 'sine', 190, 90, 0.07, 0.35);
           break;
-        case 'perfect':
-          tone('se', 'sine', 1568, 1568, 0.09, 0.05);
-          tone('se', 'sine', 2349, 2349, 0.07, 0.03);
+        case 'perfect': // パーフェクト：きらっと光る高い音
+          tone('se', 'sine', 2637, 2637, 0.16, 0.22);
+          tone('se', 'sine', 3951, 3951, 0.12, 0.12, 0.012);
+          tone('se', 'triangle', 1319, 1319, 0.1, 0.16);
+          break;
+        case 'great': // グレイト：少し控えめな明るい音
+          tone('se', 'sine', 1760, 1760, 0.1, 0.18);
+          tone('se', 'triangle', 1175, 1175, 0.08, 0.12);
           break;
         case 'miss':
           tone('se', 'triangle', 110, 70, 0.12, 0.12);
@@ -236,10 +242,16 @@
         case 'combo':
           [1046, 1318, 1568, 2093].forEach((f, i) => tone('se', 'square', f, f, 0.07, 0.035, i * 0.045));
           break;
-        case 'skill':
-          tone('se', 'sawtooth', 260, 1400, 0.3, 0.06);
-          hiss('se', 2500, 0.35, 0.08);
-          tone('se', 'sine', 1760, 1760, 0.25, 0.05, 0.2);
+        case 'skill': // スキル発動：大きく派手に
+          tone('se', 'sawtooth', 220, 1600, 0.35, 0.14);
+          hiss('se', 1500, 0.45, 0.22);
+          tone('se', 'sine', 60, 40, 0.4, 0.5);
+          [1046, 1318, 1568, 2093].forEach((f, i) => tone('se', 'square', f, f, 0.12, 0.06, 0.25 + i * 0.05));
+          break;
+        case 'attacked': // 攻撃された：警報のような音
+          tone('se', 'sawtooth', 880, 440, 0.18, 0.12);
+          tone('se', 'sawtooth', 880, 440, 0.18, 0.12, 0.2);
+          hiss('se', 800, 0.3, 0.12);
           break;
         case 'warn':
           tone('se', 'square', 1320, 1320, 0.05, 0.05);

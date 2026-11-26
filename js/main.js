@@ -1229,6 +1229,15 @@
       spellcheck: 'false',
       'aria-label': '部屋番号',
     });
+    // 名前（フレンド対戦で表示・端末に保存）
+    const nameIn = el('input', { class: 'room-name', type: 'text', maxlength: '8', placeholder: '名前（8文字まで）', autocomplete: 'nickname', 'aria-label': '名前' });
+    nameIn.value = Save.data.settings.name || '';
+    const saveName = () => {
+      Save.data.settings.name = nameIn.value.trim().slice(0, 8);
+      Save.save();
+    };
+    nameIn.addEventListener('change', saveName);
+    nameIn.addEventListener('keydown', (e) => e.stopPropagation());
     let busy = false;
     const setMsg = (text, err) => {
       msg.textContent = text || '';
@@ -1236,10 +1245,11 @@
     };
     const create = async () => {
       if (busy) return;
+      saveName();
       busy = true;
       setMsg('部屋を作っています…');
       try {
-        await Room.create(Session.mode, defaultChar());
+        await Room.create(Session.mode, defaultChar(), Save.data.settings.name);
         Session.role = 'host';
         busy = false;
         Nav.go('lobby');
@@ -1256,10 +1266,11 @@
         setMsg('部屋番号（5文字）を入れてください', true);
         return;
       }
+      saveName();
       busy = true;
       setMsg('部屋につないでいます…');
       try {
-        await Room.join(code, defaultChar());
+        await Room.join(code, defaultChar(), Save.data.settings.name);
         if (Room.state.mode !== Session.mode) {
           Session.mode = Room.state.mode; // 部屋のモード（演争・協奏）に合わせる
         }
@@ -1286,6 +1297,7 @@
       title: 'フレンド',
       crumb: modeCrumb(),
       body: [
+        el('div', { class: 'room-name-row' }, [el('label', { class: 'set-label', text: 'あなたの名前' }), nameIn]),
         el('div', { class: 'grid grid-2 big-choice room-choice' }, [
           button('部屋を作る', create, { variant: 'primary', sub: 'ホストになって部屋番号を友達に伝える', color: 'var(--neon-pink)' }),
           el('div', { class: 'room-join', style: { '--c': 'var(--neon-cyan)' } }, [
@@ -1385,7 +1397,7 @@
         const me = m.id === Room.me;
         const r = el('div', { class: 'lobby-row' + (me ? ' is-me' : '') }, [
           el('img', { src: Chars.iconURL(c, 40), alt: '' }),
-          el('span', { class: 'lobby-name', text: `P${m.num}${m.id === 'host' ? '（ホスト）' : ''}${me ? '　あなた' : ''}` }),
+          el('span', { class: 'lobby-name', text: `${m.name || 'P' + m.num}${m.id === 'host' ? '（ホスト）' : ''}${me ? '　あなた' : ''}` }),
           el('span', { class: 'lobby-cname', text: c.name }),
         ]);
         r.style.setProperty('--c', c.color);
@@ -1572,7 +1584,7 @@
   /** ホストが決めた試合を、各端末で始める */
   function startNetMatch(m) {
     const meId = Room.me;
-    const players = m.players.map((p) => Object.assign({}, p, { local: p.netId === meId, name: p.netId === meId ? 'あなた' : p.name }));
+    const players = m.players.map((p) => Object.assign({}, p, { local: p.netId === meId }));
     Session.mode = m.mode;
     Session.difficulty = m.difficulty;
     const me = players.find((p) => p.local);
@@ -1685,7 +1697,11 @@
       overlayText,
       el('div', { class: 'ov-bar' }, [overlayBar]),
     ]);
-    const laneWrap = el('div', { class: 'lane-wrap' }, [canvas, warnEl, deadEl, overlay]);
+    const cutEl = el('div', { class: 'cutin' });
+    const laneWrap = el('div', { class: 'lane-wrap' }, [canvas, cutEl, warnEl, deadEl, overlay]);
+    // 判定・コンボは叩いた位置（レーンの上）に出すので、横の表示は使わない
+    judgeEl.hidden = true;
+    comboEl.hidden = true;
     const zones = [0, 1, 2, 3].map((i) => el('div', { class: 'touch-zone', style: { '--c': `var(--lane-${i})` } }));
     const quitBtn = button('中断', () => Nav.back(), { variant: 'sub', className: 'btn-quit' });
 
@@ -1776,10 +1792,9 @@
       for (const e of out) {
         if (e.type === 'skill') {
           flashRow(e.p);
-          if (e.p === me) {
-            showSkill(`スキル発動！ ${e.skill.name}`);
-            skillPose(e.skill);
-          } else if (multi) {
+          if (e.p === me) cutIn('self', e);
+          else if (e.skill.attack && e.targets.includes(me)) cutIn('hit', e);
+          if (e.p !== me && multi) {
             const tg = e.targets.includes(me) && e.skill.target !== 'self' ? ' → あなた' : '';
             log(`${e.p.name}「${e.skill.name}」${tg}`);
           }
@@ -1808,41 +1823,57 @@
       }
     }
     /* ---------- スキル：発動の瞬間（ポーズ・スキル名・効果音・街の色） ---------- */
-    function skillPose(skill) {
-      const r = laneWrap.getBoundingClientRect();
-      const host = def.body.getBoundingClientRect();
+    /* =========================================================
+     * カットイン（監督の決定：レーンの上に大きく出す）
+     * self：自分のスキル発動（ポーズ・スキル名・効果・誰に効いたか）
+     * hit ：攻撃された（攻撃した人のマスコット・名前・スキル名・効果）
+     * ========================================================= */
+    let cutTimer = null;
+    function targetText(e) {
+      const sk = e.skill;
+      if (sk.target === 'self' || mode === 'solo') return mode === 'solo' && sk.attack ? '独奏：スコア1.5倍に変化！' : '自分に効果！';
+      const others = e.targets.filter((q) => q !== me);
+      if (!others.length) return '対象がいません';
+      if (sk.target === 'all') return `全員に！（${others.length + (e.targets.includes(me) ? 1 : 0)}人）`;
+      const names = others.slice(0, 3).map((q) => q.name);
+      return `→ ${names.join('・')}${others.length > 3 ? ` ほか${others.length - 3}人` : ''} に${sk.attack ? '攻撃！' : '効果！'}`;
+    }
+    function cutIn(kind, e) {
+      const who = e.p;
+      const sk = e.skill;
+      const self = kind === 'self';
       const dpr = Math.min(2, window.devicePixelRatio || 1);
-      const leftSpace = r.left - host.left;
-      let sz = Math.min(240, Math.max(110, Math.min(innerWidth, innerHeight) * 0.24));
-      const nameH = 46;
-      // 横に余白がなければレーンの上の余白に収まる大きさまで縮める（レーンには重ねない）
-      if (leftSpace <= sz * 0.9) sz = Math.max(56, Math.min(sz, r.top - host.top - nameH - 6));
-      poseCv.width = poseCv.height = Math.round(sz * dpr);
-      poseCv.style.width = poseCv.style.height = sz + 'px';
-      const pg = poseCv.getContext('2d');
-      pg.clearRect(0, 0, poseCv.width, poseCv.height);
-      Chars.draw(pg, me.char, poseCv.width / 2, poseCv.height / 2, poseCv.width * 0.92, 'skill');
-      poseName.textContent = skill.name;
-      poseEl.style.setProperty('--c', me.char.color);
-      // レーンには重ねない：横に余白があれば左、なければレーンの上の余白
-      if (leftSpace > sz * 0.9) {
-        poseEl.style.left = Math.max(0, r.left - host.left - sz - 12) + 'px';
-        poseEl.style.top = r.top - host.top + r.height * 0.2 + 'px';
+      const cv = el('canvas', { class: 'ci-pose' });
+      const sz = 220;
+      cv.width = cv.height = Math.round(sz * dpr);
+      Chars.draw(cv.getContext('2d'), who.char, cv.width / 2, cv.height / 2, cv.width * 0.92, self ? 'skill' : 'win');
+      const desc = mode === 'solo' && sk.attack ? 'ひとりの時は、スコアが一定時間1.5倍になります' : sk.text;
+      cutEl.replaceChildren(
+        el('div', { class: 'ci-band' }),
+        cv,
+        el('div', { class: 'ci-text' }, [
+          el('div', { class: 'ci-who', text: self ? 'スキル発動！' : `${who.name} の攻撃！` }),
+          el('div', { class: 'ci-skill', text: sk.name }),
+          el('div', { class: 'ci-desc', text: desc }),
+          el('div', { class: 'ci-target', text: self ? targetText(e) : `あなたに：${EFFECT_JA[(sk.effects.find((x) => EFFECT_JA[x.type]) || {}).type] || sk.name}` }),
+        ]),
+      );
+      cutEl.className = 'cutin ' + (self ? 'is-self' : 'is-hit');
+      cutEl.style.setProperty('--c', who.char.color);
+      void cutEl.offsetWidth;
+      cutEl.classList.add('show');
+      clearTimeout(cutTimer);
+      cutTimer = setTimeout(() => cutEl.classList.remove('show'), self ? 1500 : 1900);
+      City.tint = who.char.color;
+      City.tintUntil = performance.now() + 700;
+      if (self) {
+        skillFlashAt = lastT;
+        AE.sfx('skill');
+        FX.shake(8, 0.25);
       } else {
-        poseEl.style.left = r.left - host.left + r.width / 2 - sz / 2 + 'px';
-        poseEl.style.top = Math.max(0, r.top - host.top - sz - nameH - 4) + 'px';
+        AE.sfx('attacked');
+        FX.shake(12, 0.3);
       }
-      poseEl.classList.remove('show');
-      void poseEl.offsetWidth;
-      poseEl.classList.add('show');
-      City.tint = me.char.color;
-      City.tintUntil = performance.now() + 600;
-      AE.sfx('skill');
-      const pc = FX.center(poseEl);
-      FX.ring(pc.x, pc.y, me.char.color, sz * 1.2, 0.5, 8);
-      FX.burst(pc.x, pc.y, me.char.color, 50, 500, 0);
-      meterEl.classList.add('full');
-      setTimeout(() => meterEl.classList.remove('full'), 300);
     }
     /** 誰かがスキルを使った時：その人の欄から対象者へ光の線（13-2） */
     function skillBeams(e) {
@@ -1880,32 +1911,25 @@
       const n = e.note;
       if (n.type === 'roll') {
         const { r } = laneGeo(0);
-        if (res !== 'miss') FX.burst(r.left + r.width / 2, r.top + r.height * 0.5, '#ffa53a', 30, 420, 0);
+        if (res !== 'miss') hits.push({ lane: -1, res, at: lastT, key: false });
         return;
       }
-      const { r, lw, x, y } = laneGeo(e.lane);
-      const col = n.key ? '#ffcf3a' : LANE_COLORS[e.lane];
-      const side = e.lane < 2 ? -1 : 1;
-      const edgeX = side < 0 ? r.left : r.right;
-      if (res === 'perfect' || res === 'auto') {
-        FX.ring(x, y, col, lw * 2.2, 0.32, 6); // 光の輪（レーンの外へ広がる）
-        FX.ring(x, y, '#ffffff', lw * 1.4, 0.22, 3);
-        FX.burst(edgeX, y, col, 16, 520, side); // 火花（レーンの外側へ）
-        AE.sfx('perfect');
-      } else if (res === 'great') {
-        FX.ring(x, y, col, lw * 1.4, 0.26, 4);
-        FX.burst(edgeX, y, col, 6, 360, side);
-      } else {
+      const { r, y } = laneGeo(e.lane);
+      // 光はレーンの上（叩いた位置）に描く（監督の決定）
+      hits.push({ lane: e.lane, res, at: lastT, key: n.key });
+      if (res === 'perfect' || res === 'auto') AE.sfx('perfect');
+      else if (res === 'great') AE.sfx('great');
+      else {
         AE.sfx('miss');
         hpTrailAt = lastT + 0.35;
       }
       if (n.key && res !== 'miss') {
-        // キーノーツ：背景の看板が一斉に点灯＋画面（背景）が拍に合わせて揺れる
+        // キーノーツ：背景の看板が一斉に点灯＋画面（背景）が揺れる＋レーンの両脇に火花
         City.litUntil = performance.now() + 380;
         FX.shake(10, 0.3);
         FX.burst(r.left, y, '#ffcf3a', 24, 600, -1);
         FX.burst(r.right, y, '#ffcf3a', 24, 600, 1);
-        FX.ring(r.left + r.width / 2, y, '#ffcf3a', r.width * 1.3, 0.45, 8);
+        hits.push({ lane: -1, res, at: lastT, key: true });
         AE.sfx('key');
       }
     }
@@ -1917,8 +1941,9 @@
         comboEl.classList.remove('milestone');
         void comboEl.offsetWidth;
         comboEl.classList.add('milestone');
-        const p = FX.center(comboEl);
-        FX.burst(p.x, p.y, '#ffe94a', 40, 380, 0);
+        const lr = laneWrap.getBoundingClientRect();
+        FX.burst(lr.left, lr.top + lr.height * 0.6, '#ffe94a', 30, 420, -1);
+        FX.burst(lr.right, lr.top + lr.height * 0.6, '#ffe94a', 30, 420, 1);
         AE.sfx('combo');
       }
     }
@@ -1926,7 +1951,10 @@
       if (!evs.length) return;
       for (const e of evs) {
         if (e.type === 'judge') {
-          showJudge(e.result);
+          // 判定とコンボは叩いたレーンの上に出す（監督の決定）
+          // 文字が重なって読めなくならないよう、出すのは最新の1つだけ
+          pops.length = 0;
+          pops.push({ lane: e.note.type === 'roll' ? -1 : e.lane, res: e.result, combo: st.combo, at: lastT, key: e.note.key });
           me.lastRes = e.result;
           if (e.note.type !== 'roll') {
             flashAt[e.lane] = lastT;
@@ -1935,7 +1963,8 @@
           hitFx(e);
           if (e.result !== 'miss') comboFx();
         } else if (e.type === 'holdBreak') {
-          showJudge('miss');
+          pops.length = 0;
+          pops.push({ lane: e.lane, res: 'miss', combo: 0, at: lastT });
           flashAt[e.lane] = lastT;
           flashRes[e.lane] = 'miss';
           AE.sfx('miss');
@@ -2002,7 +2031,7 @@
       const pxs = H * 0.12 * speed * (has('rush').length ? 1.5 : 1);
       const fog = has('fog').length > 0;
       const wob = has('wobble').length > 0;
-      const nh = Math.max(8, H * 0.02);
+      const nh = Math.max(10, H * 0.026); // ノーツの厚み（角ばった横長：監督の決定）
       const Y = (tt) => jy - (tt - t) * pxs;
       const X = (n) => (wob ? Math.sin(t * 7 + n.t * 5) * lw * 0.22 : 0);
       g.clearRect(0, 0, W, H);
@@ -2034,8 +2063,7 @@
       g.font = `900 ${Math.round(W * 0.17)}px sans-serif`;
       g.fillText(Math.ceil(hp) + '%', W / 2, H * 0.32 + W * 0.13);
       g.globalAlpha = 1;
-      g.fillStyle = 'rgba(255,255,255,0.12)';
-      for (let i = 1; i < 4; i++) g.fillRect(i * lw - 1, 0, 2, H);
+      drawMeterField(t, W, H, lw, jy);
       // レーンの裏の光（ノーツより先に描く＝ノーツの上には重ねない）
       for (let i = 0; i < 4; i++) {
         const age = t - flashAt[i];
@@ -2060,6 +2088,7 @@
       }
       g.fillStyle = '#ffffff';
       g.fillRect(0, jy - 2, W, 4);
+      drawMeterLine(W, jy);
 
       const horizon = t + (jy + nh * 3) / pxs;
       const notes = ses.notes;
@@ -2136,7 +2165,7 @@
           const dead = head && (head.result === 'miss' || head.broken);
           const col = dead ? '#777777' : head && head.key ? '#ffcf3a' : LANE_COLORS[n.lane];
           g.fillStyle = 'rgba(10,8,28,0.85)';
-          rr(x, y - nh / 2, w, nh, 5);
+          rr(x, y - nh / 2, w, nh, 0);
           g.fill();
           g.strokeStyle = col;
           g.lineWidth = Math.max(3, nh * 0.22);
@@ -2157,11 +2186,11 @@
           const h = nh * 1.6;
           if (n.t - t < 1.6) {
             g.fillStyle = `rgba(255,207,58,${0.18 + 0.14 * Math.sin(performance.now() / 90)})`;
-            rr(x - 6, y - h / 2 - 6, w + 12, h + 12, 10);
+            rr(x - 6, y - h / 2 - 6, w + 12, h + 12, 0);
             g.fill();
           }
           g.fillStyle = '#ffcf3a';
-          rr(x - 2, y - h / 2, w + 4, h, 6);
+          rr(x - 2, y - h / 2, w + 4, h, 0);
           g.fill();
           g.strokeStyle = '#ffffff';
           g.lineWidth = 2;
@@ -2178,10 +2207,12 @@
           }
         } else {
           g.fillStyle = LANE_COLORS[n.lane];
-          rr(x, y - nh / 2, w, nh, 5);
-          g.fill();
-          g.fillStyle = 'rgba(255,255,255,0.85)';
-          g.fillRect(x + 4, y - nh / 2 + 2, w - 8, Math.max(2, nh * 0.2));
+          g.fillRect(x, y - nh / 2, w, nh);
+          g.fillStyle = 'rgba(255,255,255,0.9)';
+          g.fillRect(x, y - nh / 2, w, Math.max(2, nh * 0.22));
+          g.strokeStyle = 'rgba(255,255,255,0.65)';
+          g.lineWidth = Math.max(1.5, nh * 0.08);
+          g.strokeRect(x, y - nh / 2, w, nh);
         }
         if (n.type === 'hold') {
           g.fillStyle = 'rgba(10,8,28,0.8)';
@@ -2240,7 +2271,164 @@
             cover(l * lw, 0, lw, jy * ratio, cur.from);
           }
       }
+      drawHitFx(t, W, H, lw, jy);
     }
+
+    /* =========================================================
+     * スキルゲージ＝演奏画面そのもの（監督の決定）
+     * 溜まった割合だけ、レーンの区切り線・判定ライン・背景が左から右へ光る。全部光るとスキル発動。
+     * ========================================================= */
+    let skillFlashAt = -9;
+    function meterRatio() {
+      if (me.noSkill || !st.meterMax) return 0;
+      return Math.max(0, Math.min(1, st.meter / st.meterMax));
+    }
+    function drawMeterField(t, W, H, lw, jy) {
+      const col = me.char.color;
+      const r = meterRatio();
+      const Lx = r * W;
+      const near = r >= 0.85;
+      const pulse = near ? 0.5 + 0.5 * Math.sin(performance.now() / 70) : 0;
+      // 溜まった部分の背景
+      if (Lx > 0) {
+        g.fillStyle = hexA(col, 0.07 + pulse * 0.08);
+        g.fillRect(0, 0, Lx, H);
+      }
+      // 区切り線（両端を含む5本）：溜まった所まで光る
+      const dpr = W / Math.max(1, canvas.clientWidth || W);
+      for (let i = 0; i <= 4; i++) {
+        const x = Math.min(W - 1.5 * dpr, Math.max(1.5 * dpr, i * lw));
+        const lit = i * lw <= Lx + 0.5;
+        if (lit && r > 0) {
+          g.fillStyle = hexA(col, 0.28 + pulse * 0.2);
+          g.fillRect(x - 6 * dpr, 0, 12 * dpr, H);
+          g.fillStyle = hexA(col, 0.95);
+          g.fillRect(x - 1.5 * dpr, 0, 3 * dpr, H);
+          g.fillStyle = 'rgba(255,255,255,0.7)';
+          g.fillRect(x - 0.5 * dpr, 0, 1 * dpr, H);
+        } else if (i > 0 && i < 4) {
+          g.fillStyle = 'rgba(255,255,255,0.12)';
+          g.fillRect(x - 1, 0, 2, H);
+        }
+      }
+      // 光の先頭（左から右へ進んでいく）
+      if (r > 0 && r < 1) {
+        const gr = g.createLinearGradient(Lx - lw * 0.5, 0, Lx, 0);
+        gr.addColorStop(0, hexA(col, 0));
+        gr.addColorStop(1, hexA(col, 0.35 + pulse * 0.25));
+        g.fillStyle = gr;
+        g.fillRect(Lx - lw * 0.5, 0, lw * 0.5, H);
+        g.fillStyle = 'rgba(255,255,255,0.85)';
+        g.fillRect(Lx - 1 * dpr, 0, 2 * dpr, H);
+      }
+      // 発動の瞬間：画面全体が光って、左から右へ光が走る
+      const age = t - skillFlashAt;
+      if (age >= 0 && age < 0.7) {
+        const k = 1 - age / 0.7;
+        g.fillStyle = hexA(col, 0.45 * k);
+        g.fillRect(0, 0, W, H);
+        const sx = (age / 0.35) * W;
+        g.fillStyle = `rgba(255,255,255,${0.7 * k})`;
+        g.fillRect(sx - lw * 0.15, 0, lw * 0.3, H);
+      }
+    }
+    function drawMeterLine(W, jy) {
+      const r = meterRatio();
+      if (r <= 0) return;
+      const col = me.char.color;
+      const dpr = W / Math.max(1, canvas.clientWidth || W);
+      g.fillStyle = hexA(col, 0.5);
+      g.fillRect(0, jy - 7 * dpr, r * W, 14 * dpr);
+      g.fillStyle = hexA(col, 1);
+      g.fillRect(0, jy - 3 * dpr, r * W, 6 * dpr);
+      g.fillStyle = '#ffffff';
+      g.fillRect(0, jy - 1 * dpr, r * W, 2 * dpr);
+    }
+
+    /* =========================================================
+     * 叩いた時の表示（監督の決定：叩いた位置に、判定・コンボ・光をレーンの上に出す）
+     * ========================================================= */
+    const pops = []; // { lane, res, combo, at, key }
+    const hits = []; // { lane, res, at, key }
+    const POP_COL = { perfect: '#ffe94a', auto: '#5dff8f', great: '#2de2e6', miss: '#ff4b5c' };
+    function drawHitFx(t, W, H, lw, jy) {
+      const dpr = W / Math.max(1, canvas.clientWidth || W);
+      // 光：判定ラインの上で輪が広がり、光の筋が上へ伸びる
+      for (let i = hits.length - 1; i >= 0; i--) {
+        const h = hits[i];
+        const age = t - h.at;
+        if (age > 0.4 || age < -0.1) {
+          hits.splice(i, 1);
+          continue;
+        }
+        const k = Math.max(0, age) / 0.4;
+        const cx = h.lane < 0 ? W / 2 : h.lane * lw + lw / 2;
+        const col = h.res === 'miss' ? '#ff2b45' : h.key ? '#ffcf3a' : LANE_COLORS[Math.max(0, h.lane)];
+        const big = h.res === 'perfect' || h.res === 'auto' ? 1 : h.res === 'great' ? 0.75 : 0.5;
+        g.globalAlpha = (1 - k) * 0.9;
+        g.strokeStyle = col;
+        g.lineWidth = (h.key ? 8 : 5) * dpr * (1 - k * 0.6);
+        g.beginPath();
+        g.arc(cx, jy, lw * (0.2 + k * (h.key ? 1.2 : 0.75) * big), 0, Math.PI * 2);
+        g.stroke();
+        if (h.res !== 'miss') {
+          const gr = g.createLinearGradient(0, jy, 0, jy - H * 0.35 * big);
+          gr.addColorStop(0, hexA(col.length === 7 ? col : '#ffffff', 0.55 * (1 - k)));
+          gr.addColorStop(1, hexA(col.length === 7 ? col : '#ffffff', 0));
+          g.fillStyle = gr;
+          const ww = (h.lane < 0 ? W : lw) * (0.9 - k * 0.4);
+          g.fillRect(cx - ww / 2, jy - H * 0.35 * big, ww, H * 0.35 * big);
+          // 火花
+          g.fillStyle = '#ffffff';
+          for (let s = 0; s < 8; s++) {
+            const a = (s / 8) * Math.PI * 2 + h.at * 3;
+            const d = lw * (0.25 + k * 0.7) * big;
+            const sz = 4 * dpr * (1 - k);
+            g.fillRect(cx + Math.cos(a) * d - sz / 2, jy + Math.sin(a) * d * 0.6 - sz / 2, sz, sz);
+          }
+        }
+        g.globalAlpha = 1;
+      }
+      // 判定の文字とコンボ数：叩いたレーンの判定ラインのすぐ上に
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      for (let i = pops.length - 1; i >= 0; i--) {
+        const p = pops[i];
+        const age = t - p.at;
+        if (age > 0.55 || age < -0.1) {
+          pops.splice(i, 1);
+          continue;
+        }
+        const k = Math.max(0, age);
+        const sc = k < 0.08 ? 1.5 - (k / 0.08) * 0.5 : 1; // 出た瞬間に大きく
+        const alpha = age < 0.4 ? 1 : 1 - (age - 0.4) / 0.15;
+        const fs = Math.min(lw * 0.36, 34 * dpr) * sc * (p.key ? 1.25 : 1);
+        let cx = p.lane < 0 ? W / 2 : p.lane * lw + lw / 2;
+        const label = JUDGE_TEXT[p.res];
+        g.font = `900 ${Math.round(fs)}px 'Russo One', 'Orbitron', sans-serif`;
+        const tw = g.measureText(label).width;
+        cx = Math.max(tw / 2 + 4, Math.min(W - tw / 2 - 4, cx)); // 画面の外にはみ出さない
+        const y = jy - nhOf(H) * 2.2 - k * 30 * dpr;
+        g.globalAlpha = alpha;
+        g.lineWidth = Math.max(3, fs * 0.16);
+        g.strokeStyle = 'rgba(0,0,0,0.85)';
+        g.strokeText(label, cx, y);
+        g.fillStyle = POP_COL[p.res] || '#ffffff';
+        g.fillText(label, cx, y);
+        if (p.combo >= 2 && p.res !== 'miss') {
+          const cs = fs * 0.72;
+          g.font = `900 ${Math.round(cs)}px 'Russo One', 'Orbitron', sans-serif`;
+          const ct = `${p.combo} COMBO`;
+          const cw = g.measureText(ct).width;
+          const ccx = Math.max(cw / 2 + 4, Math.min(W - cw / 2 - 4, cx));
+          g.strokeText(ct, ccx, y - fs * 0.95);
+          g.fillStyle = '#ffffff';
+          g.fillText(ct, ccx, y - fs * 0.95);
+        }
+        g.globalAlpha = 1;
+      }
+    }
+    const nhOf = (H) => Math.max(10, H * 0.026);
 
     /* ---------- 0.5秒前の予告（誰から・何が来るか） ---------- */
     function updateWarn(t) {
@@ -2963,6 +3151,30 @@
   document.addEventListener('contextmenu', (e) => {
     if (e.target.closest('.touch-zone, .lane')) e.preventDefault();
   });
+  // スマホ：ダブルタップ・2本指でつまんで拡大しないようにする（iOSは user-scalable=no が効かないため）
+  let lastTouchEnd = 0;
+  document.addEventListener(
+    'touchend',
+    (e) => {
+      const now = performance.now();
+      const quick = now - lastTouchEnd < 350;
+      lastTouchEnd = now;
+      if (!quick || e.target.closest('input, textarea')) return;
+      e.preventDefault(); // 2回目のタップで拡大させない
+      const btn = e.target.closest('button');
+      if (btn && !btn.disabled) btn.click(); // 打ち消したクリックの代わり（ボタンの連打は効くように）
+    },
+    { passive: false }
+  );
+  document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+  for (const ev of ['gesturestart', 'gesturechange']) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+  document.addEventListener(
+    'touchmove',
+    (e) => {
+      if (e.touches.length > 1) e.preventDefault();
+    },
+    { passive: false }
+  );
   Nav.reset('title');
 
   // 確認・デバッグ用

@@ -45,14 +45,14 @@
     },
 
     /* ---------------- 部屋を作る・入る・抜ける ---------------- */
-    async create(mode, charId) {
+    async create(mode, charId, name) {
       this.reset();
       const code = await Net().host();
       this.state = {
         code,
         mode,
         settings: { max: 8, cpu: 0, songs: 3, free: false, strength: 'normal' },
-        members: [{ id: 'host', num: 1, charId }],
+        members: [{ id: 'host', num: 1, charId, name: cleanName(name, 1) }],
         phase: 'lobby',
         vote: null,
         match: null,
@@ -62,11 +62,11 @@
       this.notify('create');
       return code;
     },
-    async join(code, charId) {
+    async join(code, charId, name) {
       this.reset();
       await Net().join(code);
       this._listen();
-      Net().send({ t: 'hello', charId });
+      Net().send({ t: 'hello', charId, name });
       // 部屋の状態が届くまで待つ
       await new Promise((resolve, reject) => {
         const off = this.onChange((s, why) => {
@@ -156,7 +156,7 @@
             return this._reject(from, '部屋が満員です');
           if (this.member(from)) return;
           const num = Math.max(0, ...S.members.map((m) => m.num)) + 1;
-          S.members.push({ id: from, num, charId: msg.charId });
+          S.members.push({ id: from, num, charId: msg.charId, name: uniqueName(cleanName(msg.name, num), S.members) });
           this._broadcast();
           return;
         }
@@ -288,7 +288,7 @@
     },
     _afterDiff(diff) {
       const S = this.state;
-      const players = S.members.map((m) => ({ name: 'P' + m.num, charId: m.charId, netId: m.id }));
+      const players = S.members.map((m) => ({ name: m.name || 'P' + m.num, charId: m.charId, netId: m.id }));
       const used = {};
       for (let i = 0; i < S.settings.cpu; i++) {
         const c = NLM.Characters.list[Math.floor(Math.random() * NLM.Characters.list.length)];
@@ -302,6 +302,21 @@
     },
   };
 
+  /** 名前：最大8文字。空なら「P番号」 */
+  function cleanName(n, num) {
+    const s = String(n || '')
+      .replace(/[\u0000-\u001f<>]/g, '')
+      .trim()
+      .slice(0, 8);
+    return s || 'P' + num;
+  }
+  /** 同じ名前の人がいたら番号を付けて見分けられるように */
+  function uniqueName(n, members) {
+    if (!members.some((m) => m.name === n)) return n;
+    for (let k = 2; k < 40; k++) if (!members.some((m) => m.name === n + k)) return n + k;
+    return n;
+  }
+
   function shuffle(a) {
     a = a.slice();
     for (let i = a.length - 1; i > 0; i--) {
@@ -311,5 +326,6 @@
     return a;
   }
 
+  Room.cleanName = cleanName;
   NLM.Room = Room;
 })();
