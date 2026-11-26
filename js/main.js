@@ -243,6 +243,7 @@
     /* ---------- メインメニュー ---------- */
     menu() {
       Session.mode = Session.opponent = Session.role = Session.difficulty = null;
+      if (NLM.Room && NLM.Room.active) NLM.Room.leave(); // 部屋に入ったままメニューに戻った時は抜ける
       const modeBtn = (id, sub, next) =>
         button(MODES[id].name, () => {
           Session.mode = id;
@@ -288,67 +289,17 @@
 
     /* ---------- 部屋を作る / 部屋に入る（フレンド） ---------- */
     room() {
-      return {
-        title: 'フレンド',
-        crumb: modeCrumb(),
-        body: [
-          el('div', { class: 'grid grid-2 big-choice' }, [
-            button('部屋を作る', () => {
-              Session.role = 'host';
-              Nav.go('lobby');
-            }, { variant: 'primary', sub: 'ホストになる', color: 'var(--neon-pink)' }),
-            button('部屋に入る', () => {
-              Session.role = 'guest';
-              Nav.go('lobby');
-            }, { variant: 'primary', sub: '部屋番号を入力', color: 'var(--neon-cyan)' }),
-          ]),
-          placeholder('（仮表示）部屋番号での合流はフェーズ8で実装'),
-        ],
-      };
+      return RoomScreen();
     },
 
-    /* ---------- ロビー ---------- */
+    /* ---------- ロビー（フレンド） ---------- */
     lobby() {
-      const friend = Session.opponent === 'friend';
-      const lines = friend
-        ? [
-            Session.role === 'host' ? '部屋番号：----（あなたがホスト）' : '部屋番号：----（参加者）',
-            '参加者一覧・キャラ選択・ホストの設定',
-            '（仮表示）フェーズ4・8で実装',
-          ]
-        : ['参加するCPU・キャラ選択', '（仮表示）フェーズ4で実装'];
-      return {
-        title: Session.mode === 'battle' ? 'ロビー（キャラ選択）' : 'ロビー',
-        crumb: modeCrumb(),
-        body: placeholder(lines),
-        foot: nextButton('準備OK → 曲投票へ', () => Nav.go('songVote')),
-      };
+      return LobbyScreen();
     },
 
-    /* ---------- 曲投票 ---------- */
-    songVote() {
-      const lines =
-        Session.mode === 'battle'
-          ? ['候補の曲から多数決で演奏順を決める', '制限時間20秒・同票はルーレット', '（仮表示）フェーズ8で実装']
-          : ['解禁済みの全曲から多数決', '制限時間20秒・1位が複数ならルーレット', '（仮表示）フェーズ4・8で実装'];
-      return {
-        title: '曲投票',
-        crumb: modeCrumb(),
-        body: placeholder(lines),
-        foot: nextButton('投票を締め切る → 難易度投票へ', () => Nav.go('diffVote')),
-      };
-    },
-
-    /* ---------- 難易度投票 ---------- */
-    diffVote() {
-      return {
-        title: '難易度投票',
-        crumb: modeCrumb(),
-        body: [
-          placeholder('多数決で難易度を決める（同票はルーレット）'),
-          difficultyButtons(() => Nav.go('play')),
-        ],
-      };
+    /* ---------- 投票（フレンド：曲・難易度） ---------- */
+    vote() {
+      return VoteScreen();
     },
 
     /* ---------- ルール設定（演争・CPU） ---------- */
@@ -1131,6 +1082,459 @@
   }
 
   /* =========================================================
+   * フレンド対戦（7章・14章）：部屋を作る・入る、ロビー、投票
+   * 部屋の状態は room.js（ホストが決めて全員に配る）。画面はその状態を表示し、希望を送るだけ。
+   * ========================================================= */
+  const Room = NLM.Room;
+  const Net = NLM.Net;
+  const STRENGTH_NAMES = () => Object.entries(NLM.Battle.STRENGTH).map(([k, v]) => [k, v.name]);
+
+  function myChars() {
+    return NLM.Characters.list.filter((c) => Save.data.unlocked.characters.includes(c.id));
+  }
+  function defaultChar() {
+    const ok = myChars();
+    return ok.some((c) => c.id === Session.charId) ? Session.charId : ok[0].id;
+  }
+
+  /** 確認・お知らせの小窓。buttons: [[文字, 押した時の処理, 主ボタンか]] */
+  function showDialog(title, text, buttons) {
+    if (UI.modalClose) UI.modalClose();
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      ov.remove();
+      UI.modalClose = null;
+    };
+    const bs = buttons.map(([label, fn, primary]) =>
+      button(label, () => {
+        close();
+        if (fn) fn();
+      }, { variant: primary ? 'primary' : 'sub', className: primary ? 'btn-next' : '' })
+    );
+    const ov = el('div', { class: 'unlock-ov dialog-ov' }, [
+      el('div', { class: 'unlock-card dialog-card', style: { '--c': 'var(--neon-cyan)' } }, [
+        el('div', { class: 'unlock-name', text: title }),
+        text ? el('div', { class: 'unlock-desc', text }) : null,
+        el('div', { class: 'foot-row' }, bs),
+      ]),
+    ]);
+    document.body.append(ov);
+    UI.modalClose = close;
+    bs[0].focus();
+  }
+
+  /** 部屋から抜ける（確認あり） */
+  function confirmLeave() {
+    const host = Room.isHost;
+    showDialog(host ? '部屋を閉じますか？' : '部屋から抜けますか？', host ? 'ホストが抜けると、部屋は解散します。' : '', [
+      ['抜ける', () => leaveRoom(), true],
+      ['やめる', null],
+    ]);
+  }
+  function leaveRoom() {
+    Room.leave();
+    Session.match = null;
+    Nav.reset('menu');
+  }
+
+  /* 部屋の進み方に合わせて、全員の画面を切り替える（ホストが決めた phase に従う） */
+  Room.onChange((S, why) => {
+    if (why === 'lost') {
+      Session.match = null;
+      Net.close();
+      Room.reset();
+      Nav.reset('menu');
+      showDialog('ホストとの接続が切れました', '試合を終了しました。メニューに戻ります。', [['OK', null, true]]);
+      return;
+    }
+    if (!S || !Nav.cur) return;
+    const at = Nav.cur.id;
+    const base = [{ id: 'menu' }, { id: 'opponent' }, { id: 'room' }];
+    if (S.phase === 'lobby' && at !== 'lobby' && at !== 'room') Nav.goWithStack(base, 'lobby');
+    else if (/Vote|Result/.test(S.phase) && at !== 'vote') Nav.goWithStack(base.concat([{ id: 'lobby' }]), 'vote');
+    else if (S.phase === 'play' && S.match && (!Session.match || Session.match.netId !== S.match.id)) startNetMatch(S.match);
+  });
+
+  /* ---------- 部屋を作る / 部屋に入る ---------- */
+  function RoomScreen() {
+    const msg = el('div', { class: 'room-msg', role: 'status' });
+    const input = el('input', {
+      class: 'room-input',
+      type: 'text',
+      maxlength: '5',
+      placeholder: 'ABCDE',
+      autocomplete: 'off',
+      autocapitalize: 'characters',
+      spellcheck: 'false',
+      'aria-label': '部屋番号',
+    });
+    let busy = false;
+    const setMsg = (text, err) => {
+      msg.textContent = text || '';
+      msg.classList.toggle('is-err', !!err);
+    };
+    const create = async () => {
+      if (busy) return;
+      busy = true;
+      setMsg('部屋を作っています…');
+      try {
+        await Room.create(Session.mode, defaultChar());
+        Session.role = 'host';
+        busy = false;
+        Nav.go('lobby');
+      } catch (e) {
+        Room.leave();
+        setMsg(e.message, true);
+      }
+      busy = false;
+    };
+    const join = async () => {
+      if (busy) return;
+      const code = input.value.trim().toUpperCase();
+      if (code.length !== 5) {
+        setMsg('部屋番号（5文字）を入れてください', true);
+        return;
+      }
+      busy = true;
+      setMsg('部屋につないでいます…');
+      try {
+        await Room.join(code, defaultChar());
+        if (Room.state.mode !== Session.mode) {
+          Session.mode = Room.state.mode; // 部屋のモード（演争・協奏）に合わせる
+        }
+        Session.role = 'guest';
+        busy = false;
+        Nav.go('lobby');
+      } catch (e) {
+        Room.leave();
+        setMsg(e.message, true);
+      }
+      busy = false;
+    };
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation(); // 文字の入力中は画面のキー操作に回さない
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        join();
+      } else if (e.key === 'Escape') input.blur();
+    });
+    input.addEventListener('input', () => {
+      input.value = input.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+    });
+    return {
+      title: 'フレンド',
+      crumb: modeCrumb(),
+      body: [
+        el('div', { class: 'grid grid-2 big-choice room-choice' }, [
+          button('部屋を作る', create, { variant: 'primary', sub: 'ホストになって部屋番号を友達に伝える', color: 'var(--neon-pink)' }),
+          el('div', { class: 'room-join', style: { '--c': 'var(--neon-cyan)' } }, [
+            el('label', { class: 'set-label', text: '部屋番号を入れて参加' }),
+            input,
+            button('部屋に入る', join, { variant: 'primary', color: 'var(--neon-cyan)', className: 'btn-join' }),
+          ]),
+        ]),
+        msg,
+        el('p', { class: 'room-note', text: '同じ部屋番号を入れた人どうしでつながります（2〜32人）。ログインは要りません。' }),
+      ],
+      onLeave() {
+        if (busy) Room.leave();
+      },
+    };
+  }
+
+  /* ---------- ロビー：参加者・キャラ選択・ホストの設定 ---------- */
+  function LobbyScreen() {
+    const S0 = Room.state;
+    if (!S0) return { title: 'ロビー', body: placeholder('部屋がありません'), onEnter: () => setTimeout(() => Nav.reset('menu')) };
+    const battle = S0.mode === 'battle';
+    const Chars = NLM.Characters;
+    const codeEl = el('div', { class: 'room-code' });
+    const listEl = el('div', { class: 'lobby-list' });
+    const infoEl = el('div', { class: 'rules-total' });
+    const startBtn = button('投票を始める', () => Room.startVote(), { variant: 'primary', className: 'btn-next' });
+    const waitEl = el('div', { class: 'lobby-wait', text: 'ホストが始めるのを待っています…' });
+    let off = null;
+
+    // キャラ選択（自分の解禁済みのキャラから）
+    const charBtns = myChars().map((c) => {
+      const b = button('', () => {
+        Session.charId = c.id;
+        Room.setChar(c.id);
+      }, { className: 'lobby-char' });
+      b.dataset.id = c.id;
+      b.replaceChildren(el('img', { src: Chars.iconURL(c, 56), alt: '' }), el('span', { class: 'lobby-char-n', text: c.name }));
+      b.style.setProperty('--c', c.color);
+      if (!battle && c.skill.attack) b.append(el('span', { class: 'lobby-char-note', text: 'スキルなし' }));
+      return b;
+    });
+    const charInfo = el('div', { class: 'lobby-char-info' });
+
+    // ホストの設定（ゲストは見るだけ）
+    const ctl = [];
+    const stepRow = (label, key, lo, hi) => {
+      const val = el('span', { class: 'set-value set-value-big' });
+      const step = (d) => Room.setSettings({ [key]: Math.max(lo(), Math.min(hi(), Room.state.settings[key] + d)) });
+      const bs = [button('−', () => step(-1), { className: 'btn-step' }), button('＋', () => step(1), { className: 'btn-step' })];
+      ctl.push(...bs);
+      const row = el('div', { class: 'set-row' }, [el('label', { class: 'set-label', text: label }), el('div', { class: 'set-control stepper' }, [bs[0], val, bs[1]])]);
+      row._sync = () => (val.textContent = Room.state.settings[key]);
+      return row;
+    };
+    const toggleRow = (label, items, get, set) => {
+      const bs = items.map(([v, t]) => {
+        const b = button(t, () => set(v), { className: 'btn-toggle' });
+        b.dataset.v = v;
+        return b;
+      });
+      ctl.push(...bs);
+      const row = el('div', { class: 'set-row' }, [el('label', { class: 'set-label', text: label }), el('div', { class: 'set-control toggles' }, bs)]);
+      row._sync = () => bs.forEach((b) => b.classList.toggle('is-on', String(get()) === b.dataset.v));
+      return row;
+    };
+    const S = () => Room.state.settings;
+    const rows = [
+      stepRow('最大人数', 'max', () => Math.max(2, Room.state.members.length), () => 32),
+      stepRow('CPUで補う人数', 'cpu', () => 0, () => S().max - Room.state.members.length),
+      toggleRow('CPUの強さ', STRENGTH_NAMES(), () => S().strength, (v) => Room.setSettings({ strength: v })),
+    ];
+    let freeRow = null;
+    if (battle) {
+      rows.push(
+        toggleRow(
+          '曲数',
+          [
+            ['3', '3曲'],
+            ['5', '5曲'],
+            ['free', '自由'],
+          ],
+          () => (S().free ? 'free' : S().songs),
+          (v) => Room.setSettings(v === 'free' ? { free: true } : { free: false, songs: Number(v) })
+        )
+      );
+      freeRow = stepRow('自由な曲数', 'songs', () => 1, () => 10);
+      rows.push(freeRow);
+    }
+
+    function draw() {
+      const R = Room.state;
+      if (!R) return;
+      codeEl.replaceChildren(el('span', { class: 'room-code-k', text: '部屋番号' }), el('span', { class: 'room-code-v', text: R.code }));
+      const rowsEl = R.members.map((m) => {
+        const c = Chars.get(m.charId) || Chars.list[0];
+        const me = m.id === Room.me;
+        const r = el('div', { class: 'lobby-row' + (me ? ' is-me' : '') }, [
+          el('img', { src: Chars.iconURL(c, 40), alt: '' }),
+          el('span', { class: 'lobby-name', text: `P${m.num}${m.id === 'host' ? '（ホスト）' : ''}${me ? '　あなた' : ''}` }),
+          el('span', { class: 'lobby-cname', text: c.name }),
+        ]);
+        r.style.setProperty('--c', c.color);
+        return r;
+      });
+      if (R.settings.cpu) rowsEl.push(el('div', { class: 'lobby-row is-cpu' }, [el('span', { class: 'lobby-name', text: `CPU ×${R.settings.cpu}（${NLM.Battle.STRENGTH[R.settings.strength].name}）` })]));
+      listEl.replaceChildren(...rowsEl);
+      const meM = Room.member(Room.me);
+      charBtns.forEach((b) => b.classList.toggle('is-on', !!meM && b.dataset.id === meM.charId));
+      const mc = meM && Chars.get(meM.charId);
+      if (mc) charInfo.textContent = `${mc.name}：スキル「${mc.skill.name}」${mc.skill.text}${!battle && mc.skill.attack ? '（協奏ではスキルなし）' : ''}`;
+      rows.forEach((r) => r._sync());
+      if (freeRow) freeRow.hidden = !R.settings.free;
+      ctl.forEach((b) => (b.disabled = !Room.isHost));
+      const total = R.members.length + R.settings.cpu;
+      infoEl.textContent = `参加 ${total}人（フレンド ${R.members.length}人＋CPU ${R.settings.cpu}人${R.settings.cpu ? `・${NLM.Battle.STRENGTH[R.settings.strength].name}` : ''}）／最大 ${R.settings.max}人${battle ? `　曲数 ${R.settings.songs}曲` : ''}`;
+      startBtn.disabled = total < 2;
+      startBtn.hidden = !Room.isHost;
+      waitEl.hidden = Room.isHost && total >= 2;
+      waitEl.textContent = Room.isHost ? '友達の参加を待つか、CPUで補ってください（2人以上）' : 'ホストが始めるのを待っています…';
+    }
+    return {
+      title: battle ? 'ロビー（演争）' : 'ロビー（協奏）',
+      crumb: modeCrumb(),
+      color: MODES[S0.mode].color,
+      body: el('div', { class: 'lobby' }, [
+        codeEl,
+        el('div', { class: 'lobby-cols' }, [
+          el('div', { class: 'lobby-col' }, [
+            el('h2', { class: 'lobby-h', text: '参加者' }),
+            listEl,
+            Room.isHost ? el('h2', { class: 'lobby-h', text: 'ホストの設定' }) : null,
+            Room.isHost ? el('div', { class: 'settings-panel lobby-settings' }, rows) : null,
+          ]),
+          el('div', { class: 'lobby-col' }, [el('h2', { class: 'lobby-h', text: 'キャラ選択' }), el('div', { class: 'lobby-chars' }, charBtns), charInfo]),
+        ]),
+        infoEl,
+      ]),
+      foot: el('div', { class: 'foot-row' }, [startBtn, waitEl]),
+      onEnter(screen) {
+        off = Room.onChange(() => draw());
+        draw();
+        // スマホの縦画面：最初は参加者の一覧から見えるように
+        const cols = screen.querySelector('.lobby-cols');
+        if (cols) cols.scrollTop = 0;
+      },
+      onLeave() {
+        if (off) off();
+      },
+      onBack: confirmLeave,
+    };
+  }
+
+  /* ---------- 投票：曲（演争は曲数ぶん・協奏は1曲）→ 難易度。制限時間20秒・同票はルーレット ---------- */
+  function VoteScreen() {
+    const timerEl = el('div', { class: 'vote-timer' });
+    const headEl = el('div', { class: 'vote-head' });
+    const listEl = el('div', { class: 'vote-list' });
+    const resultEl = el('div', { class: 'vote-result' });
+    let off = null;
+    let tick = null;
+    let shownKey = null;
+    let picks = [];
+    let rouletteTimer = null;
+    const songName = (id) => {
+      const s = NLM.Songs.get(id);
+      return s ? s.title : id;
+    };
+    const diffName = (id) => NLM.Songs.DIFFICULTIES.find((d) => d.id === id).name;
+
+    function buildChoices(v) {
+      picks = [];
+      if (v.kind === 'diff') {
+        return NLM.Songs.DIFFICULTIES.map((d, i) => {
+          const b = button(d.name, () => choose(v, d.id), { color: DIFF_COLORS[i], className: 'btn-diff vote-btn' });
+          b.dataset.v = d.id;
+          return b;
+        });
+      }
+      return v.cands.map((id, i) => {
+        const s = NLM.Songs.get(id);
+        const b = button(s.title, () => choose(v, id), {
+          className: 'vote-btn vote-song',
+          sub: `${s.genre}　BPM ${s.bpm}`,
+        });
+        b.dataset.v = id;
+        b.style.setProperty('--c', LANE_COLORS[(s.no || i) % 4]);
+        return b;
+      });
+    }
+    function choose(v, id) {
+      if (v.result) return;
+      if (v.pick === 1) picks = [id];
+      else if (picks.includes(id)) picks = picks.filter((x) => x !== id);
+      else if (picks.length < v.pick) picks = picks.concat(id);
+      else picks = picks.slice(1).concat(id); // 上限を超えたら一番古い選択を外す
+      Room.vote(picks);
+      syncPicks();
+    }
+    function syncPicks() {
+      listEl.querySelectorAll('.vote-btn').forEach((b) => {
+        const k = picks.indexOf(b.dataset.v);
+        b.classList.toggle('is-on', k >= 0);
+        b.dataset.order = k >= 0 && Room.state.vote.pick > 1 ? k + 1 : '';
+      });
+    }
+    function draw() {
+      const R = Room.state;
+      if (!R || !R.vote) return;
+      const v = R.vote;
+      const key = R.phase.replace('Result', 'Vote') + ':' + v.endsAt;
+      if (key !== shownKey) {
+        shownKey = key;
+        listEl.replaceChildren(...buildChoices(v));
+        listEl.classList.toggle('is-many', v.cands.length > 12);
+        resultEl.replaceChildren();
+        clearInterval(rouletteTimer);
+        UI.focusFirst(listEl);
+      }
+      const what = v.kind === 'song' ? (v.pick > 1 ? `曲を${v.pick}曲まで選んでください（多い順に演奏）` : '曲を1曲選んでください') : '難易度を選んでください';
+      headEl.textContent = v.result ? (v.kind === 'song' ? '曲が決まりました' : '難易度が決まりました') : `${what}　投票 ${v.voted}/${v.total}`;
+      listEl.classList.toggle('is-closed', !!v.result);
+      if (v.result && !resultEl.childNodes.length) showResult(v);
+    }
+    function showResult(v) {
+      const name = v.kind === 'song' ? songName : diffName;
+      const lines = v.result.chosen.map((id, i) => el('div', { class: 'vote-res-row' }, [el('span', { class: 'vote-res-no', text: v.kind === 'song' && v.pick > 1 ? `${i + 1}曲目` : '決定' }), el('span', { class: 'vote-res-name', text: name(id) }), el('span', { class: 'vote-res-n', text: `${v.result.count[id]}票` })]));
+      resultEl.replaceChildren(...lines);
+      // 得票数を候補の上にも出す
+      listEl.querySelectorAll('.vote-btn').forEach((b) => {
+        b.dataset.votes = `${v.result.count[b.dataset.v] || 0}票`;
+        b.classList.toggle('is-won', v.result.chosen.includes(b.dataset.v));
+      });
+      const rl = v.result.roulette;
+      if (rl && rl.cands.length > 1) {
+        // 同票：ルーレット（候補の間を光が回り、だんだん遅くなって止まる）
+        resultEl.prepend(el('div', { class: 'vote-roulette', text: v.result.abstain ? '全員棄権のためランダムで決定！' : '同票のためルーレット！' }));
+        const btns = rl.cands.map((id) => listEl.querySelector(`.vote-btn[data-v="${id}"]`)).filter(Boolean);
+        btns.forEach((b) => b.classList.remove('is-won'));
+        let k = 0;
+        let delay = 60;
+        const spin = () => {
+          btns.forEach((b, i) => b.classList.toggle('is-spin', i === k % btns.length));
+          AE.sfx('move');
+          k++;
+          delay *= 1.12;
+          if (delay < 420) rouletteTimer = setTimeout(spin, delay);
+          else {
+            btns.forEach((b) => b.classList.remove('is-spin'));
+            btns.forEach((b) => b.classList.toggle('is-won', rl.won.includes(b.dataset.v)));
+            AE.sfx('key');
+          }
+        };
+        spin();
+      } else AE.sfx('key');
+    }
+    function updateTimer() {
+      const v = Room.state && Room.state.vote;
+      if (!v) return;
+      const left = Math.max(0, Math.ceil((Net.toLocal(v.endsAt) - performance.now()) / 1000));
+      timerEl.textContent = v.result ? '' : `あと ${left} 秒`;
+      timerEl.classList.toggle('is-hurry', !v.result && left <= 5);
+    }
+    return {
+      title: '投票',
+      crumb: modeCrumb(),
+      back: true,
+      body: el('div', { class: 'vote' }, [el('div', { class: 'vote-top' }, [headEl, timerEl]), listEl, resultEl]),
+      onEnter() {
+        off = Room.onChange(() => draw());
+        draw();
+        tick = setInterval(updateTimer, 200);
+        updateTimer();
+      },
+      onLeave() {
+        if (off) off();
+        clearInterval(tick);
+        clearTimeout(rouletteTimer);
+      },
+      onBack: confirmLeave,
+    };
+  }
+
+  /** ホストが決めた試合を、各端末で始める */
+  function startNetMatch(m) {
+    const meId = Room.me;
+    const players = m.players.map((p) => Object.assign({}, p, { local: p.netId === meId, name: p.netId === meId ? 'あなた' : p.name }));
+    Session.mode = m.mode;
+    Session.difficulty = m.difficulty;
+    const me = players.find((p) => p.local);
+    if (me) Session.charId = me.charId;
+    Session.match = {
+      mode: m.mode,
+      difficulty: m.difficulty,
+      songs: m.songs.slice(),
+      index: 0,
+      played: [],
+      auto: false,
+      preview: false,
+      battle: NLM.Battle.create({ mode: m.mode, players, seed: m.seed, net: { host: Room.isHost } }),
+      recorded: false,
+      net: true,
+      netId: m.id,
+    };
+    Nav.goWithStack([{ id: 'menu' }, { id: 'opponent' }, { id: 'room' }, { id: 'lobby' }], 'play', {});
+  }
+
+  /* =========================================================
    * 演奏画面（5・6・7章、13-2）
    * - 判定は judge.js、スキル・CPU・脱落は battle.js
    * - HPはレーンの裏にバーと%（協奏は共通HP）
@@ -1161,6 +1565,7 @@
     }
     const mode = match.mode;
     const B = match.battle;
+    const net = !!match.net; // フレンド対戦（14章）
     const me = B.players.find((p) => p.local);
     const song = NLM.Songs.get(match.songs[match.index]);
     const diff = match.difficulty;
@@ -1469,7 +1874,7 @@
           hpTrailAt = lastT + 0.35;
         }
       }
-      battleEvents(B.onLocal(me, evs, lastT));
+      battleEvents(relay(B.onLocal(me, evs, lastT)));
       updateHud();
     }
     const canPlay = () => !auto && when !== null && !ended && me.alive;
@@ -1788,7 +2193,7 @@
         const i = keyIdx[keyPtr++];
         const mine = ses.notes[i].result;
         const ok = (r) => r === 'perfect' || r === 'auto';
-        if (ok(mine) && B.players.every((p) => p.local || ok(p.results[i]))) {
+        if (ok(mine) && B.players.every((p) => p.local || p.gone || ok(p.results[i] || (net ? p.lastRes : undefined)))) {
           if (t - lastFlash > 0.4) {
             lastFlash = t;
             flashEl.classList.remove('go');
@@ -1805,6 +2210,17 @@
       GameLoop.stop();
       if (audio) audio.stop();
       match.played.push(song.id);
+      if (net) {
+        // フレンド対戦：全員の演奏が終わるのを待ち、次の曲・結果はホストが決める
+        overlay.hidden = false;
+        overlay.classList.remove('count');
+        overlayText.textContent = 'ほかの人の演奏が終わるのを待っています…';
+        sendState();
+        Net.send({ t: 'done', i: match.index, m: match.netId });
+        // ホスト：演奏が終わらない人がいても、20秒待ったら先へ進む
+        if (Net.isHost) goTimer = setTimeout(() => hostMaybeNext(true), 20000);
+        return;
+      }
       // 演争：生存者が複数いて次の曲がある → 次の曲へ（HPは引き継ぐ）
       if (mode === 'battle' && !B.over && B.alive().length > 1 && match.index < match.songs.length - 1) {
         match.index++;
@@ -1813,6 +2229,155 @@
       }
       recordMatch(match);
       Nav.go('result', {});
+    }
+
+    /* ---------- 演奏の開始（音を鳴らす時刻 w は音声の時計） ---------- */
+    let rendered = null;
+    function begin(w) {
+      if (when !== null || !rendered || ended) return;
+      when = w;
+      const startAt = Math.max(w, AE.now() + 0.12);
+      // 開始の合図が遅れて届いた時は、曲の途中から鳴らして全員と合わせる
+      audio = AE.playRendered(rendered, startAt, startAt - w);
+      overlay.classList.add('count');
+      // 背景の看板が曲の拍に合わせて点滅（13-1）
+      City.clock = () => (AE.now() - when) / chart.compiled.spb;
+      City._bps = chart.compiled.bpm / 60;
+    }
+
+    /* =========================================================
+     * フレンド対戦の通信（14章）
+     * 状態：1秒に10回。出来事（スキル・脱落）：すぐ。ホストが中継し、CPUはホストが計算する。
+     * ========================================================= */
+    let offNet = null;
+    let goTimer = null;
+    let lastGo = null;
+    const readySet = new Set();
+    const doneSet = new Set();
+    const byNet = new Map(B.players.filter((p) => p.netId).map((p) => [p.netId, p]));
+    const humansLeft = () => B.players.filter((p) => p.netId && !p.gone).map((p) => p.netId);
+    const sendOut = (msg) => (Net.isHost ? Net.broadcast(msg, { self: false }) : Net.send(msg));
+    /** 自分（ホストならCPUも）のスキル・脱落を全員に送る */
+    function relay(out) {
+      if (!net) return out;
+      for (const e of out) {
+        if (!e.mine) continue;
+        if (e.type === 'skill') sendOut({ t: 'sk', i: e.p.idx, tg: e.targets.map((q) => q.idx), at: e.t, ln: e.lanes });
+        else if (e.type === 'elim') sendOut({ t: 'el', i: e.p.idx, seq: e.p.elim.seq, song: e.p.elim.song, at: e.p.elim.t });
+      }
+      return out;
+    }
+    const stateOf = (p) => [p.idx, Math.round(p.st.hp * 10) / 10, p.st.score, p.st.combo, Math.round(p.st.meter * 10) / 10, p.lastRes || '', p.st.maxCombo, Math.round(p.sharedDelta * 10) / 10];
+    const fromState = (a) => ({ hp: a[1], score: a[2], combo: a[3], meter: a[4], res: a[5] || undefined, maxCombo: a[6], sd: a[7] });
+    function sendState() {
+      if (Net.isHost) {
+        const shp = B.shared ? B.recomputeShared() : undefined;
+        Net.broadcast({ t: 'sts', m: match.netId, a: B.players.filter((p) => !p.gone).map(stateOf), shp }, { self: false });
+      } else Net.send({ t: 'st', m: match.netId, a: stateOf(me), c: me.st.counts });
+    }
+    function finalStates() {
+      return B.players.map((p) => ({ i: p.idx, a: stateOf(p), c: p.st.counts }));
+    }
+    function hostGo() {
+      if (lastGo) return;
+      clearTimeout(goTimer);
+      lastGo = { t: 'go', i: match.index, m: match.netId, at: Net.hostNow() + 3500 };
+      Net.broadcast(lastGo);
+    }
+    function hostMaybeNext(force) {
+      if (!force && !humansLeft().every((id) => doneSet.has(id))) return;
+      if (doneSet.has('_sent')) return;
+      doneSet.add('_sent');
+      if (mode === 'battle' && !B.over && B.alive().length > 1 && match.index < match.songs.length - 1) Net.broadcast({ t: 'next', i: match.index + 1, m: match.netId });
+      else Net.broadcast({ t: 'final', m: match.netId, order: B.standings().map((x) => x.p.idx), s: finalStates() });
+    }
+    function onNet(msg, from) {
+      if (msg.m !== undefined && msg.m !== match.netId) return;
+      const host = Net.isHost;
+      const P = (i) => B.players[i];
+      switch (msg.t) {
+        /* ---- ホストが受け取る ---- */
+        case 'ready':
+          if (!host || msg.i !== match.index) return;
+          readySet.add(from);
+          if (lastGo) Net.sendTo(from, lastGo); // 遅れて準備ができた人にも開始時刻を送る
+          else if (humansLeft().every((id) => readySet.has(id))) hostGo();
+          else if (!goTimer) goTimer = setTimeout(hostGo, 40000); // 準備に時間がかかる人がいても40秒で始める
+          return;
+        case 'st': {
+          if (!host) return;
+          const p = byNet.get(from);
+          if (!p) return;
+          B.remoteState(p, Object.assign(fromState(msg.a), { counts: msg.c }));
+          return;
+        }
+        case 'done':
+          if (!host || msg.i !== match.index) return;
+          doneSet.add(from);
+          hostMaybeNext();
+          return;
+        case '_leave': {
+          if (!host) return;
+          const p = byNet.get(from);
+          if (!p || p.gone) return;
+          battleEvents(B.drop(p, lastT));
+          log(`${p.name} の接続が切れました`);
+          Net.broadcast({ t: 'gone', i: p.idx, at: lastT, m: match.netId }, { self: false });
+          if (readySet.size && !lastGo && humansLeft().every((id) => readySet.has(id))) hostGo();
+          if (ended) hostMaybeNext();
+          return;
+        }
+        /* ---- 全員が受け取る（ホストは中継もする） ---- */
+        case 'sk':
+        case 'el': {
+          const p = P(msg.i);
+          if (!p || B.owns(p)) return;
+          if (host) Net.broadcast(msg, { except: from, self: false });
+          if (msg.t === 'sk') battleEvents(B.remoteSkill(p, msg.tg, msg.at, msg.ln));
+          else battleEvents(B.remoteElim(p, { seq: msg.seq, song: msg.song, t: msg.at }));
+          updatePlist();
+          return;
+        }
+        case 'sts':
+          if (host) return;
+          for (const a of msg.a) {
+            const p = P(a[0]);
+            if (p && !B.owns(p)) B.remoteState(p, fromState(a));
+          }
+          if (msg.shp !== undefined) B.setShared(msg.shp);
+          return;
+        case 'gone': {
+          const p = P(msg.i);
+          if (p && !p.gone) {
+            battleEvents(B.drop(p, msg.at));
+            log(`${p.name} の接続が切れました`);
+          }
+          return;
+        }
+        case 'go':
+          if (msg.i !== match.index) return;
+          begin(AE.now() + (Net.toLocal(msg.at) - performance.now()) / 1000);
+          return;
+        case 'next':
+          match.index = msg.i;
+          ended = true;
+          Nav.replace('play', {});
+          return;
+        case 'final':
+          for (const x of msg.s) {
+            const p = P(x.i);
+            if (!p || p.local) continue;
+            p.st.hp = x.a[1];
+            p.st.score = x.a[2];
+            p.st.maxCombo = x.a[6];
+            if (x.c) Object.assign(p.st.counts, x.c);
+          }
+          match.finalOrder = msg.order;
+          ended = true;
+          recordMatch(match);
+          Nav.go('result', {});
+          return;
+      }
     }
 
     const def = {
@@ -1838,6 +2403,7 @@
       ]),
       onEnter() {
         AE.init();
+        if (net) offNet = Net.on(onNet);
         NLM._play = { ses, st, chart, match, when: () => when };
         ro = new ResizeObserver(() => {
           resize();
@@ -1854,12 +2420,14 @@
         })
           .then((r) => {
             if (ended || Nav.cur.def !== def) return;
-            when = AE.now() + 3.2; // 3秒のカウントダウン
-            audio = AE.playRendered(r, when, 0);
-            overlay.classList.add('count');
-            // 背景の看板が曲の拍に合わせて点滅（13-1）
-            City.clock = () => (AE.now() - when) / chart.compiled.spb;
-            City._bps = chart.compiled.bpm / 60;
+            rendered = r;
+            if (net) {
+              // 全員の準備ができたら、ホストが「この時刻に開始」と送ってくる（14章）
+              overlayText.textContent = 'ほかの人の準備を待っています…';
+              Net.send({ t: 'ready', i: match.index, m: match.netId });
+              return;
+            }
+            begin(AE.now() + 3.2); // 3秒のカウントダウン
           })
           .catch((e) => {
             overlayText.textContent = '読み込みに失敗しました：' + e.message;
@@ -1883,12 +2451,13 @@
             AE.sfx('go');
           }
           if (me.alive) handleEvents(ses.update(t));
-          battleEvents(B.tick(t));
+          battleEvents(relay(B.tick(t)));
           coopCheck(t);
           updateWarn(t);
           draw(t);
           if (performance.now() - plistAt > 100) {
             plistAt = performance.now();
+            if (net) sendState();
             updatePlist();
             if (B.shared) updateHud();
           }
@@ -1902,7 +2471,10 @@
         GameLoop.stop();
         if (audio) audio.stop();
         if (ro) ro.disconnect();
+        if (offNet) offNet();
+        clearTimeout(goTimer);
       },
+      onBack: net ? confirmLeave : undefined,
       onKey(e) {
         if (e.key === 'Escape') {
           Nav.back();
@@ -1940,6 +2512,13 @@
     Session.charId = keepChar;
   }
 
+  /** 順位：フレンド対戦はホストが決めた順（全員の画面で同じ順位にする） */
+  function rankingOf(match) {
+    const B = match.battle;
+    if (match.finalOrder) return match.finalOrder.map((i, k) => ({ rank: k + 1, p: B.players[i] }));
+    return B.standings();
+  }
+
   /** 記録：自己ベスト（独奏）と、解禁条件用の累計（試作曲・自動演奏は数えない） */
   function recordMatch(match) {
     if (match.recorded || match.auto) return;
@@ -1965,7 +2544,7 @@
       T.maxCombo = Math.max(T.maxCombo, st.maxCombo);
       T.charPlays[me.char.id] = (T.charPlays[me.char.id] || 0) + real;
       if (match.mode === 'coop') T.coopPlays += real;
-      if (match.mode === 'battle' && B.players.length > 1 && B.standings()[0].p === me) T.battleWins++;
+      if (match.mode === 'battle' && B.players.length > 1 && rankingOf(match)[0].p === me) T.battleWins++;
       if (match.mode === 'solo' && !st.gameOver) {
         T.clears++;
         if (match.difficulty === 'hard' || match.difficulty === 'extra') T.hardClears++;
@@ -2150,7 +2729,20 @@
       startMatch(match.songs.slice(), match.difficulty);
     };
     let foot;
-    if (match.preview) foot = [button('サウンドテストへ', () => Nav.goWithStack([{ id: 'menu' }, { id: 'settings' }], 'soundTest'), { variant: 'primary', className: 'btn-next' })];
+    if (match.net) {
+      // フレンド対戦：次へ進めるのはホスト。ゲストはホストの操作を待つ
+      const R = NLM.Room;
+      const leave = button('部屋を抜ける', confirmLeave, { variant: 'sub' });
+      if (!R.active) foot = [button('メニューへ', () => Nav.reset('menu'), { variant: 'primary', className: 'btn-next' })];
+      else if (R.isHost)
+        foot = [
+          mode === 'coop'
+            ? button('次の曲を選ぶ', () => R.startVote(), { variant: 'primary', className: 'btn-next' })
+            : button('ロビーへ戻る', () => R.backToLobby(), { variant: 'primary', className: 'btn-next' }),
+          leave,
+        ];
+      else foot = [el('div', { class: 'lobby-wait', text: mode === 'coop' ? 'ホストが次の曲を選ぶのを待っています…' : 'ホストがロビーに戻るのを待っています…' }), leave];
+    } else if (match.preview) foot = [button('サウンドテストへ', () => Nav.goWithStack([{ id: 'menu' }, { id: 'settings' }], 'soundTest'), { variant: 'primary', className: 'btn-next' })];
     else if (mode === 'coop')
       foot = [
         button('次の曲を選ぶ', () => Nav.goWithStack([{ id: 'menu' }, { id: 'opponent' }, { id: 'cpuRules' }, { id: 'charSelect' }], 'songDiffSelect'), { variant: 'primary', className: 'btn-next' }),
@@ -2170,7 +2762,7 @@
     let winner = null;
     const winCv = el('canvas', { class: 'win-cv' });
     if (mode === 'battle') {
-      const ranks = B.standings();
+      const ranks = rankingOf(match);
       const win = ranks[0].p;
       winner = win;
       body = el('div', { class: 'result result-battle' }, [
@@ -2245,7 +2837,7 @@
       back: false,
       body,
       foot: el('div', { class: 'foot-row' }, foot),
-      onBack: () => Nav.reset('menu'),
+      onBack: match.net && NLM.Room.active ? confirmLeave : () => Nav.reset('menu'),
       onEnter() {
         const FX = NLM.FX;
         // 新しく解禁したものがあれば、勝利の演出のあとに順番に見せる

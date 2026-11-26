@@ -2308,3 +2308,350 @@ body {
     height: 100%;
   }
 }
+
+/* =========================================================
+ * フェーズ8：フレンド対戦（部屋・ロビー・投票）
+ * ========================================================= */
+.room-choice {
+  align-items: stretch;
+}
+.room-join {
+  --c: var(--neon-cyan);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: clamp(6px, 1.4vmin, 12px);
+  padding: clamp(10px, 2vmin, 20px);
+  border: 2px solid var(--c);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--c) 45%, transparent);
+  font-size: var(--fs-body);
+}
+.room-input {
+  width: 100%;
+  font: 900 clamp(28px, 5vmin + 10px, 56px) / 1.1 'Russo One', 'Orbitron', sans-serif;
+  letter-spacing: 0.3em;
+  text-align: center;
+  text-transform: uppercase;
+  padding: 0.2em 0.1em 0.2em 0.4em;
+  color: var(--neon-cyan);
+  background: rgba(4, 3, 14, 0.85);
+  border: 2px solid var(--neon-cyan);
+  border-radius: 12px;
+  outline: none;
+  text-shadow: 0 0 10px var(--neon-cyan);
+  user-select: text;
+  -webkit-user-select: text;
+}
+.room-input:focus {
+  box-shadow: 0 0 0 3px rgba(45, 226, 230, 0.35), 0 0 18px var(--neon-cyan);
+}
+.room-input::placeholder {
+  color: rgba(45, 226, 230, 0.25);
+}
+.btn-join {
+  min-height: 56px;
+}
+@media (max-aspect-ratio: 4/5) {
+  .room-choice {
+    grid-template-columns: 1fr;
+  }
+  .room-choice > .btn {
+    min-height: clamp(70px, 16vh, 140px);
+  }
+}
+.room-msg {
+  min-height: 1.4em;
+  text-align: center;
+  font-size: var(--fs-body);
+  color: var(--neon-cyan);
+}
+.room-msg.is-err {
+  color: var(--neon-red);
+}
+.room-note {
+  margin: 0;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: calc(var(--fs-body) * 0.85);
+}
+
+/* ロビー */
+.lobby {
+  flex: 1;
+  min-height: 0;
+  width: min(100%, 1100px);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(6px, 1.4vmin, 14px);
+}
+.room-code {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.6em;
+}
+.room-code-k {
+  color: var(--text-dim);
+  font-size: var(--fs-body);
+}
+.room-code-v {
+  font: 900 clamp(30px, 6vmin + 8px, 64px) / 1 'Russo One', 'Orbitron', sans-serif;
+  letter-spacing: 0.25em;
+  color: var(--neon-yellow);
+  text-shadow: 0 0 10px var(--neon-yellow), 0 0 28px rgba(255, 233, 74, 0.6);
+  user-select: text;
+  -webkit-user-select: text;
+}
+.lobby-cols {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: clamp(8px, 2vmin, 20px);
+}
+.lobby-col {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(4px, 1vmin, 10px);
+  overflow-y: auto;
+}
+.lobby-col > * {
+  flex-shrink: 0;
+}
+[hidden] {
+  display: none !important;
+}
+.lobby-h {
+  margin: 0;
+  font-size: calc(var(--fs-body) * 0.95);
+  color: var(--neon-cyan);
+  text-shadow: 0 0 8px rgba(45, 226, 230, 0.6);
+}
+.lobby-list {
+  display: grid;
+  gap: 4px;
+}
+.lobby-row {
+  --c: var(--neon-purple);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  border-left: 4px solid var(--c);
+  border-radius: 10px;
+  background: var(--panel);
+  font-size: var(--fs-body);
+}
+.lobby-row img {
+  width: 36px;
+  height: 36px;
+}
+.lobby-row.is-me {
+  box-shadow: 0 0 0 2px var(--neon-yellow), 0 0 14px rgba(255, 233, 74, 0.45);
+}
+.lobby-row.is-cpu {
+  grid-template-columns: 1fr;
+  padding: 8px 12px;
+  color: var(--text-dim);
+}
+.lobby-cname {
+  color: var(--text-dim);
+  font-size: 0.85em;
+}
+.lobby-chars {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 6px;
+}
+.lobby-char {
+  --c: var(--neon-purple);
+  position: relative;
+  min-height: 0;
+  padding: 4px 2px;
+  border-width: 2px;
+  box-shadow: none;
+  opacity: 0.6;
+  gap: 0;
+  font-size: 12px;
+}
+.lobby-char img {
+  width: 46px;
+  height: 46px;
+}
+.lobby-char.is-on {
+  opacity: 1;
+  box-shadow: 0 0 10px var(--c), 0 0 22px var(--c);
+}
+.lobby-char-n {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.lobby-char-note {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.7);
+  color: var(--text-dim);
+}
+.lobby-char-info {
+  font-size: calc(var(--fs-body) * 0.85);
+  color: var(--text-dim);
+  min-height: 2.6em;
+}
+.lobby-settings {
+  width: 100%;
+}
+.lobby-settings .set-row {
+  grid-template-columns: minmax(6em, 1fr) 2.2fr;
+}
+.lobby-settings {
+  padding: clamp(6px, 1.4vmin, 14px) clamp(10px, 2vmin, 18px);
+}
+.lobby-settings .btn-step {
+  min-height: 44px;
+}
+.lobby-settings .btn:disabled {
+  opacity: 0.35;
+}
+.lobby-settings .btn-toggle.is-on:disabled {
+  opacity: 0.85;
+}
+.lobby-wait {
+  align-self: center;
+  color: var(--neon-cyan);
+  font-size: var(--fs-body);
+  animation: wait-blink 1.6s ease-in-out infinite;
+}
+@keyframes wait-blink {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (max-aspect-ratio: 1/1) {
+  .lobby-cols {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+  .lobby-col {
+    overflow: visible;
+  }
+}
+
+/* 投票 */
+.vote {
+  flex: 1;
+  min-height: 0;
+  width: min(100%, 1100px);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(6px, 1.4vmin, 12px);
+}
+.vote-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-body);
+}
+.vote-timer {
+  font: 900 clamp(22px, 3.4vmin + 8px, 40px) / 1 'Russo One', sans-serif;
+  color: var(--neon-yellow);
+  text-shadow: 0 0 10px var(--neon-yellow);
+  white-space: nowrap;
+}
+.vote-timer.is-hurry {
+  color: var(--neon-red);
+  text-shadow: 0 0 12px var(--neon-red);
+  animation: wait-blink 0.5s steps(2) infinite;
+}
+.vote-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  align-content: start;
+  gap: 8px;
+  padding: 4px;
+}
+.vote-btn {
+  position: relative;
+  opacity: 0.75;
+}
+.vote-song {
+  min-height: clamp(56px, 10vmin, 84px);
+  font-size: calc(var(--fs-btn) * 0.7);
+}
+.vote-btn.is-on {
+  opacity: 1;
+  box-shadow: 0 0 0 3px var(--neon-yellow), 0 0 18px var(--neon-yellow);
+}
+.vote-btn.is-on[data-order]:not([data-order=''])::before {
+  content: attr(data-order);
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  font: 900 16px/1 'Russo One', sans-serif;
+  color: var(--neon-yellow);
+}
+.vote-btn[data-votes]::after {
+  content: attr(data-votes);
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 14px;
+  color: var(--text);
+}
+.vote-list.is-closed .vote-btn {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.vote-list.is-closed .vote-btn.is-won,
+.vote-list .vote-btn.is-spin {
+  opacity: 1;
+  box-shadow: 0 0 0 3px var(--neon-pink), 0 0 26px var(--neon-pink);
+  transform: scale(1.03);
+}
+.vote-result {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  font-size: var(--fs-body);
+}
+.vote-roulette {
+  color: var(--neon-pink);
+  text-shadow: 0 0 10px var(--neon-pink);
+}
+.vote-res-row {
+  display: flex;
+  gap: 0.8em;
+  align-items: baseline;
+}
+.vote-res-no {
+  color: var(--text-dim);
+}
+.vote-res-name {
+  color: var(--neon-yellow);
+  text-shadow: 0 0 8px rgba(255, 233, 74, 0.6);
+}
+.vote-res-n {
+  color: var(--text-dim);
+  font-size: 0.85em;
+}
+
+/* 確認の小窓 */
+.dialog-card {
+  width: min(100%, 460px);
+}
+.dialog-card .foot-row {
+  margin-top: 8px;
+}
