@@ -553,6 +553,11 @@
         [2800, 12, 0.25],
       ].forEach(([fr, q, g]) => {
         const b = filter(ctx, 'bandpass', fr, q);
+        if (inst.wah) {
+          // トークボックス風：口を閉じた「ウ」から開いた「ア」へ、音ごとに声の帯域を動かす
+          b.frequency.setValueAtTime(fr * 0.4, t);
+          b.frequency.setTargetAtTime(fr, t, inst.wah);
+        }
         const bg = gainNode(ctx, g);
         mix.connect(b).connect(bg).connect(amp);
       });

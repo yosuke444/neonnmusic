@@ -486,7 +486,7 @@
   }
 
   // 難易度ごとの「複雑さの値」の想定幅 → 数字の範囲に写す（50曲の実際の値で合わせる）
-  const RAW_SPAN = { easy: [1.5, 4], normal: [3.9, 8], hard: [5.8, 14], extra: [7.3, 20] };
+  const RAW_SPAN = { easy: [1.9, 4.3], normal: [4.6, 9], hard: [7.6, 14.5], extra: [10.5, 21] };
   function rawOf(s) {
     return s.nps * 0.95 + s.peak * 0.45 + s.chordRatio * 4 + s.holdRatio * 2 + (s.bpm >= 160 ? 0.4 : 0);
   }

@@ -532,7 +532,7 @@
       else add(ok ? 'ok' : 'warn', '主旋律', `${s.name}：${short.join(' ') || '（主旋律なし）'}${ok ? '' : '　→「同じ・同じ・同じ・変化」になっていない'}`);
       // 1拍目にキック・クラッシュ・ベース・リード
       const at0 = new Set(c.events.filter((e) => Math.abs(e.beat - s.startBeat) < 1e-6).map((e) => c.parts[e.part].type === 'bass' ? 'bass' : e.part));
-      const need = s.flags.impact === false ? ['bass', lead] : ['kick', 'crash', 'bass', lead];
+      const need = s.flags.impact === false ? ['bass'] : ['kick', 'crash', 'bass', lead]; // 衝撃音なしの区間（ソロなど）はベースだけ
       const miss = need.filter((n) => !at0.has(n));
       add(miss.length ? 'warn' : 'ok', 'ドロップ', `${s.name}の1拍目：${miss.length ? miss.join('・') + ' が鳴っていない' : 'キック・クラッシュ・ベース・リードが同時'}`);
     }
