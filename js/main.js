@@ -110,6 +110,7 @@
       }
       const def = Screens[id](params);
       this.cur = { id, params, def };
+      if (NLM._setTouchGuard) NLM._setTouchGuard(id !== 'play' && id !== 'calib'); // 演奏中はタッチを止める処理を外す
 
       const head =
         def.head === false
@@ -2319,9 +2320,11 @@
       z.addEventListener('lostpointercapture', up);
     });
 
+    let lowRes = false;
     function resize() {
       const r = laneWrap.getBoundingClientRect();
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      lowRes = NLM.FX.budget < 1; // 重い時は少しだけ解像度を下げる（ノーツの形・位置は変わらない）
+      const dpr = Math.min(2, window.devicePixelRatio || 1) * (lowRes ? 0.75 : 1);
       canvas.width = Math.max(1, Math.round(r.width * dpr));
       canvas.height = Math.max(1, Math.round(r.height * dpr));
     }
@@ -3058,6 +3061,7 @@
           battleEvents(relay(B.tick(t)));
           coopCheck(t);
           updateWarn(t);
+          if ((NLM.FX.budget < 1) !== lowRes) resize();
           draw(t - vo);
           if (performance.now() - plistAt > 100) {
             plistAt = performance.now();
@@ -3550,29 +3554,30 @@
     if (e.target.closest('.touch-zone, .lane')) e.preventDefault();
   });
   // スマホ：ダブルタップ・2本指でつまんで拡大しないようにする（iOSは user-scalable=no が効かないため）
+  // 【軽量化】画面全体のタッチを毎回止めて確認する処理は、スマホではタッチのたびに描画の手が空くのを待つため
+  // 「叩いた瞬間に固まる」原因になる。演奏画面では使わず、CSS（touch-action）で拡大を止める。
+  // メニューなどの画面だけ、2回目の素早いタップで拡大しないよう、タップを打ち消してボタンを押し直す。
   let lastTouchEnd = 0;
-  document.addEventListener(
-    'touchend',
-    (e) => {
-      const now = performance.now();
-      const quick = now - lastTouchEnd < 350;
-      lastTouchEnd = now;
-      if (!quick || e.target.closest('input, textarea')) return;
-      e.preventDefault(); // 2回目のタップで拡大させない
-      const btn = e.target.closest('button');
-      if (btn && !btn.disabled) btn.click(); // 打ち消したクリックの代わり（ボタンの連打は効くように）
-    },
-    { passive: false }
-  );
-  document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+  const onTouchEnd = (e) => {
+    const now = performance.now();
+    const quick = now - lastTouchEnd < 350;
+    lastTouchEnd = now;
+    if (!quick || e.target.closest('input, textarea')) return;
+    e.preventDefault(); // 2回目のタップで拡大させない
+    const btn = e.target.closest('button');
+    if (btn && !btn.disabled) btn.click(); // 打ち消したクリックの代わり（ボタンの連打は効くように）
+  };
+  let touchGuard = false;
+  NLM._setTouchGuard = (on) => {
+    if (on === touchGuard) return;
+    touchGuard = on;
+    if (on) document.addEventListener('touchend', onTouchEnd, { passive: false });
+    else document.removeEventListener('touchend', onTouchEnd, { passive: false });
+  };
+  NLM._setTouchGuard(true);
+  document.addEventListener('dblclick', (e) => e.preventDefault());
+  // iOSの2本指でつまむ拡大（タッチの流れとは別の出来事なので、演奏の邪魔をしない）
   for (const ev of ['gesturestart', 'gesturechange']) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
-  document.addEventListener(
-    'touchmove',
-    (e) => {
-      if (e.touches.length > 1) e.preventDefault();
-    },
-    { passive: false }
-  );
   Nav.reset('title');
 
   // 確認・デバッグ用

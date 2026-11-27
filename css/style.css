@@ -3186,3 +3186,16 @@ body {
   font-size: clamp(13px, 1.8vmin + 7px, 20px);
   color: #fff;
 }
+
+/* 拡大の防止はCSSで（スクリプトでタッチを止めると、スマホで叩いた瞬間に固まる原因になる） */
+*,
+*::before,
+*::after {
+  touch-action: manipulation;
+}
+.play2,
+.play2 *,
+.touch-zone,
+.calib-pad {
+  touch-action: none !important;
+}

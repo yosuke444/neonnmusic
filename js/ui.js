@@ -712,6 +712,7 @@
   /* ---------- 1つのループで背景と演出を動かす ---------- */
   let last = 0;
   let avg = 16;
+  let frameNo = 0;
   function loop(now) {
     const dt = Math.min(0.1, (now - (last || now)) / 1000);
     last = now;
@@ -725,7 +726,8 @@
       FX.resize();
     } else FX.budget = nb;
     Perf.tick(now, dt);
-    City.frame(now);
+    // 重い時は背景の街を1フレームおきに描く（ゆっくり動くので見た目はほぼ変わらない）
+    if (FX.budget >= 1 || (frameNo++ & 1) === 0) City.frame(now);
     FX.frame(now, dt);
     // 揺れ
     const sh = now < FX.shakeUntil ? FX.shakeAmp * ((FX.shakeUntil - now) / 300) : 0;
