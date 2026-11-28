@@ -110,7 +110,6 @@
       }
       const def = Screens[id](params);
       this.cur = { id, params, def };
-      if (NLM._setTouchGuard) NLM._setTouchGuard(id !== 'play' && id !== 'calib'); // 演奏中はタッチを止める処理を外す
 
       const head =
         def.head === false
@@ -2707,8 +2706,7 @@
         g.globalAlpha = 1;
       }
       // 判定の文字とコンボ数：叩いたレーンの判定ラインのすぐ上に
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
+      // 軽量化：文字は1回だけ絵にして使い回す（毎フレーム縁取りの文字を描かない）
       for (let i = pops.length - 1; i >= 0; i--) {
         const p = pops[i];
         const age = t - p.at;
@@ -2719,31 +2717,48 @@
         const k = Math.max(0, age);
         const sc = k < 0.08 ? 1.5 - (k / 0.08) * 0.5 : 1; // 出た瞬間に大きく
         const alpha = age < 0.4 ? 1 : 1 - (age - 0.4) / 0.15;
-        const fs = Math.min(lw * 0.36, 34 * dpr) * sc * (p.key ? 1.25 : 1);
+        const fs = Math.round(Math.min(lw * 0.36, 34 * dpr) * (p.key ? 1.25 : 1));
+        const lab = textSprite(JUDGE_TEXT[p.res], fs, POP_COL[p.res] || '#ffffff');
+        const w = lab.width * sc;
+        const h = lab.height * sc;
         let cx = p.lane < 0 ? W / 2 : p.lane * lw + lw / 2;
-        const label = JUDGE_TEXT[p.res];
-        g.font = `900 ${Math.round(fs)}px 'Russo One', 'Orbitron', sans-serif`;
-        const tw = g.measureText(label).width;
-        cx = Math.max(tw / 2 + 4, Math.min(W - tw / 2 - 4, cx)); // 画面の外にはみ出さない
+        cx = Math.max(w / 2 + 2, Math.min(W - w / 2 - 2, cx)); // 画面の外にはみ出さない
         const y = jy - nhOf(H) * 2.2 - k * 30 * dpr;
         g.globalAlpha = alpha;
-        g.lineWidth = Math.max(3, fs * 0.16);
-        g.strokeStyle = 'rgba(0,0,0,0.85)';
-        g.strokeText(label, cx, y);
-        g.fillStyle = POP_COL[p.res] || '#ffffff';
-        g.fillText(label, cx, y);
+        g.drawImage(lab, cx - w / 2, y - h / 2, w, h);
         if (p.combo >= 2 && p.res !== 'miss') {
-          const cs = fs * 0.72;
-          g.font = `900 ${Math.round(cs)}px 'Russo One', 'Orbitron', sans-serif`;
-          const ct = `${p.combo} COMBO`;
-          const cw = g.measureText(ct).width;
-          const ccx = Math.max(cw / 2 + 4, Math.min(W - cw / 2 - 4, cx));
-          g.strokeText(ct, ccx, y - fs * 0.95);
-          g.fillStyle = '#ffffff';
-          g.fillText(ct, ccx, y - fs * 0.95);
+          const cb = textSprite(`${p.combo} COMBO`, Math.round(fs * 0.72), '#ffffff');
+          const ccx = Math.max(cb.width / 2 + 2, Math.min(W - cb.width / 2 - 2, cx));
+          g.drawImage(cb, ccx - cb.width / 2, y - fs * 0.95 - cb.height / 2);
         }
         g.globalAlpha = 1;
       }
+    }
+    /** 縁取り付きの文字を1回だけ描いて使い回す（同じ文字・大きさ・色なら同じ絵） */
+    const textCache = new Map();
+    function textSprite(text, fs, color) {
+      const key = text + '|' + fs + '|' + color;
+      let c = textCache.get(key);
+      if (c) return c;
+      if (textCache.size > 400) textCache.clear();
+      c = document.createElement('canvas');
+      const cg = c.getContext('2d');
+      const font = `900 ${fs}px 'Russo One', 'Orbitron', sans-serif`;
+      cg.font = font;
+      const lwid = Math.max(3, fs * 0.16);
+      c.width = Math.ceil(cg.measureText(text).width + lwid * 2 + 4);
+      c.height = Math.ceil(fs * 1.3 + lwid * 2);
+      cg.font = font;
+      cg.textAlign = 'center';
+      cg.textBaseline = 'middle';
+      cg.lineJoin = 'round';
+      cg.lineWidth = lwid;
+      cg.strokeStyle = 'rgba(0,0,0,0.85)';
+      cg.strokeText(text, c.width / 2, c.height / 2);
+      cg.fillStyle = color;
+      cg.fillText(text, c.width / 2, c.height / 2);
+      textCache.set(key, c);
+      return c;
     }
     const nhOf = (H) => Math.max(10, H * 0.026);
     const colCache = {};
@@ -3553,31 +3568,7 @@
   document.addEventListener('contextmenu', (e) => {
     if (e.target.closest('.touch-zone, .lane')) e.preventDefault();
   });
-  // スマホ：ダブルタップ・2本指でつまんで拡大しないようにする（iOSは user-scalable=no が効かないため）
-  // 【軽量化】画面全体のタッチを毎回止めて確認する処理は、スマホではタッチのたびに描画の手が空くのを待つため
-  // 「叩いた瞬間に固まる」原因になる。演奏画面では使わず、CSS（touch-action）で拡大を止める。
-  // メニューなどの画面だけ、2回目の素早いタップで拡大しないよう、タップを打ち消してボタンを押し直す。
-  let lastTouchEnd = 0;
-  const onTouchEnd = (e) => {
-    const now = performance.now();
-    const quick = now - lastTouchEnd < 350;
-    lastTouchEnd = now;
-    if (!quick || e.target.closest('input, textarea')) return;
-    e.preventDefault(); // 2回目のタップで拡大させない
-    const btn = e.target.closest('button');
-    if (btn && !btn.disabled) btn.click(); // 打ち消したクリックの代わり（ボタンの連打は効くように）
-  };
-  let touchGuard = false;
-  NLM._setTouchGuard = (on) => {
-    if (on === touchGuard) return;
-    touchGuard = on;
-    if (on) document.addEventListener('touchend', onTouchEnd, { passive: false });
-    else document.removeEventListener('touchend', onTouchEnd, { passive: false });
-  };
-  NLM._setTouchGuard(true);
-  document.addEventListener('dblclick', (e) => e.preventDefault());
-  // iOSの2本指でつまむ拡大（タッチの流れとは別の出来事なので、演奏の邪魔をしない）
-  for (const ev of ['gesturestart', 'gesturechange']) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+  // 拡大の防止は監督の決定で行わない（タッチを止める処理は、叩いた瞬間に固まる原因になりうるため）
   Nav.reset('title');
 
   // 確認・デバッグ用

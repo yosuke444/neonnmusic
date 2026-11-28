@@ -207,17 +207,25 @@
     /** 効果音を前もって書き出しておく */
     _prerender(name) {
       const ctx = this.ctx;
-      if (!ctx || this._sfxCache[name] || this._sfxPending[name] || !window.OfflineAudioContext) return;
+      if (!ctx || this._sfxCache[name] || this._sfxPending[name] || this._sfxFailed || !window.OfflineAudioContext) return;
       this._sfxPending[name] = true;
       const sr = ctx.sampleRate;
-      const off = new OfflineAudioContext(1, Math.round(sr * 1.4), sr);
+      let off;
+      try {
+        off = new OfflineAudioContext(1, Math.round(sr * 1.4), sr);
+      } catch (e) {
+        this._sfxFailed = true;
+        return;
+      }
       let bus = 'se';
       this._voice(off, (b) => ((bus = b), off.destination), 0, name);
       off
         .startRendering()
         .then((buf) => (this._sfxCache[name] = { buf, bus }))
-        .catch(() => {})
-        .finally(() => delete this._sfxPending[name]);
+        .catch(() => {
+          // 作り置きに失敗する端末では二度と試さない（叩くたびにやり直すと、叩いた瞬間に固まる）
+          this._sfxFailed = true;
+        });
     },
     /** よく使う効果音を作り置き（起動時） */
     preloadSfx() {

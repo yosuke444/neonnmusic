@@ -2726,17 +2726,6 @@ body {
   padding-right: 2em;
 }
 
-/* 演奏画面では拡大・スクロールの操作を受け付けない（ダブルタップで拡大しない） */
-.play2,
-.play2 * {
-  touch-action: none;
-}
-html,
-body {
-  touch-action: manipulation;
-  overscroll-behavior: none;
-}
-
 /* =========================================================
  * 演奏画面の作り直し（監督の決定）
  * スキルゲージは演奏画面そのもの（キャンバスに描く）。横のバーは出さない。
@@ -3187,15 +3176,13 @@ body {
   color: #fff;
 }
 
-/* 拡大の防止はCSSで（スクリプトでタッチを止めると、スマホで叩いた瞬間に固まる原因になる） */
-*,
-*::before,
-*::after {
-  touch-action: manipulation;
-}
-.play2,
-.play2 *,
+/* 叩くボタン：iPadのSafariで長押しのメニュー・選択の拡大鏡・タップの色が出ないように（叩いた瞬間の引っかかりを防ぐ） */
 .touch-zone,
+.lane-wrap,
 .calib-pad {
-  touch-action: none !important;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
